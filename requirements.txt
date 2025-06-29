@@ -3,4 +3,5 @@ pandas
 matplotlib
 yfinance
 tensorflow
-scikit-learn streamlit
+scikit-learn 
+streamlit
