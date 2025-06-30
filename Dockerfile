@@ -2,7 +2,7 @@
 FROM python:3.10-slim
 
 # Set working directory
-WORKDIR /src
+# WORKDIR /src
 
 # Copy files
 COPY . .
@@ -27,4 +27,4 @@ ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS false
 EXPOSE 8501
 
 # Run Streamlit
-CMD ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "src/main.py", "--server.port=8501", "--server.address=0.0.0.0"]
