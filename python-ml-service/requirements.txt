@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+scikit-learn # Or tensorflow, pytorch, etc., depending on your ML model
+pandas
+numpy
+# Add any other libraries your ML model or data preprocessing needs

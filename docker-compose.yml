@@ -1,0 +1,36 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  nextjs-frontend:
+    build:
+      context: ./nextjs-frontend # Points to the Next.js app directory
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000" # Maps host port 3000 to container port 3000
+    environment:
+      # This env var is crucial for Next.js to find the ML service internally
+      # 'python-ml-service' is the name of the service in this docker-compose file
+      ML_SERVICE_BASE_URL: http://python-ml-service:8000
+    depends_on:
+      - python-ml-service # Ensures ML service starts before frontend
+    volumes:
+      # Optional: Mount node_modules for faster local rebuilds if needed, but not strictly necessary for production-like builds.
+      # - ./nextjs-frontend/node_modules:/app/node_modules
+      - ./nextjs-frontend:/app # Mount entire app for live reload (dev only)
+
+  # Corrected docker-compose.yml snippet
+  python-ml-service:
+    build:
+      context: ./python-ml-service
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./python-ml-service/src:/app/src
+      - ./python-ml-service/models:/app/models
+    environment:
+      # These are key-value pairs (mapping)
+      DATABASE_URL: your_database_url
+      API_KEY_EXTERNAL_DATA: your_api_key
+      # Add any other environment variables your Python ML service needs

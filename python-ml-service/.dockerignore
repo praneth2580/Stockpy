@@ -1,0 +1,13 @@
+# python-ml-service/.dockerignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.ipynb_checkpoints
+.pytest_cache
+.vscode/
+.git/
+.gitignore
+venv/
+env/

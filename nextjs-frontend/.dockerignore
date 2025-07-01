@@ -1,0 +1,7 @@
+# nextjs-frontend/.dockerignore
+node_modules
+.next
+.git
+.gitignore
+.env.local
+.env

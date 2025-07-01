@@ -1,0 +1,20 @@
+# Generate a dummy model for testing
+from sklearn.linear_model import LinearRegression
+import joblib
+import os
+
+# Create a dummy model
+dummy_model = LinearRegression()
+# Fit it to some dummy data (e.g., 3 features, 1 target)
+X = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+y = [10, 20, 30]
+dummy_model.fit(X, y)
+
+# Ensure the models directory exists
+models_dir = 'python-ml-service/models'
+os.makedirs(models_dir, exist_ok=True)
+
+# Save the dummy model
+model_path = os.path.join(models_dir, 'stock_predictor_model.pkl')
+joblib.dump(dummy_model, model_path)
+print(f"Dummy model saved to: {model_path}")
