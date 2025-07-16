@@ -5,6 +5,7 @@ from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 import yfinance as yf
+import streamlit as st
 
 def fetch_stock_data(ticker, start, end):
     data = yf.download(ticker, start=start, end=end)
@@ -69,7 +70,11 @@ def main():
     plt.xlabel("Days")
     plt.ylabel("Stock Price")
     plt.legend()
-    plt.show()
+    fig, ax = plt.subplots()
+    ax.plot(y_real, color='blue', label='Actual Stock Price')
+    ax.plot(y_pred, color='red', linestyle='dashed', label='Predicted Stock Price')
+    st.pyplot(fig)
+    # plt.show()
 
 if __name__ == "__main__":
     main()

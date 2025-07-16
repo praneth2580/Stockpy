@@ -146,9 +146,9 @@ if st.button("Predict Best F&O Trades"):
 def main():
     """Main function to run the Streamlit app."""
     st.title("📊 Futures & Options Predictor")
-    stock_name = st.sidebar.text_input("Enter Stock Symbol", "NIFTY")
+    stock_name = st.sidebar.text_input("Enter Stock Symbol", "NIFTY", key="fando_stock_input")
 
-    if st.button("Predict Best F&O Trades"):
+    if st.button("Predict Best F&O Trades", key="fando_predict_button"):
         recommendations = suggest_fno_trades(stock_name)
         st.write(recommendations)
 
