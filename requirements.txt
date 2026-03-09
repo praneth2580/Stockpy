@@ -1,8 +1,6 @@
-streamlit
 pandas
-yfinance
-scikit-learn
 numpy
-joblib
-matplotlib
-tensorflow
+yfinance
+rich
+simple-term-menu
+vaderSentiment
