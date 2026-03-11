@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 settings = {
     "workers": 3,
     "period": "1y",
+    "telegram_token": "5710041825:AAEulSFLC4TBEidHKYcmsmBht-u7_AJUbj4",
+    "telegram_chat_id": "5710041825",
 }
 
 def process_ticker(ticker: str, period: str) -> dict:
@@ -84,3 +86,4 @@ def run_scan(tickers: list, console, render_report_callback):
     console.print(f"[success]✔ Done[/success] in [bold]{elapsed:.2f}s[/bold]")
 
     render_report_callback(results)
+    return results

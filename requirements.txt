@@ -4,3 +4,4 @@ yfinance
 rich
 simple-term-menu
 vaderSentiment
+requests

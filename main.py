@@ -17,6 +17,7 @@ from simple_term_menu import TerminalMenu
 
 # Core runner logic
 from scanner.runner import run_scan, settings
+from scanner.notifier import TelegramNotifier
 
 # ─── Logging Setup ──────────────────────────────────────────
 DEV_MODE = True
@@ -247,7 +248,14 @@ def handle_scan():
     raw = Prompt.ask("  [bold yellow]Tickers[/bold yellow] (space separated)")
     tickers = raw.strip().split()
     if tickers:
-        run_scan(tickers, console, render_report)
+        results = run_scan(tickers, console, render_report)
+        
+        # Telegram Notification
+        notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
+        if notifier.is_configured():
+            with console.status("[bold cyan]Sending to Telegram...[/]"):
+                report_text = notifier.format_analysis_report(results)
+                notifier.send_message(report_text)
 
 
 def handle_quick_scan():
@@ -257,12 +265,26 @@ def handle_quick_scan():
     selected = menu.show()
     if selected:
         tickers = [NSE_POPULAR[i] for i in selected]
-        run_scan(tickers, console, render_report)
+        results = run_scan(tickers, console, render_report)
+        
+        # Telegram Notification
+        notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
+        if notifier.is_configured():
+            with console.status("[bold cyan]Sending to Telegram...[/]"):
+                report_text = notifier.format_analysis_report(results)
+                notifier.send_message(report_text)
 
 
 def handle_settings():
     while True:
-        options = [f"Workers          ──  {settings['workers']}", f"Data Period      ──  {settings['period']}", f"Dev Mode         ──  {'ON' if DEV_MODE else 'OFF'}", "← Back"]
+        options = [
+            f"Workers          ──  {settings['workers']}", 
+            f"Data Period      ──  {settings['period']}", 
+            f"Telegram Token   ──  {'SET' if settings['telegram_token'] else 'NOT SET'}",
+            f"Telegram Chat ID ──  {settings['telegram_chat_id'] or 'NOT SET'}",
+            f"Dev Mode         ──  {'ON' if DEV_MODE else 'OFF'}", 
+            "← Back"
+        ]
         idx = arrow_menu("⚙️  Settings", options)
 
         if idx == 0:
@@ -273,6 +295,12 @@ def handle_settings():
             p_idx = arrow_menu("Select data period", [f"  {p}" for p in opts])
             if p_idx >= 0: settings["period"] = opts[p_idx]
         elif idx == 2:
+            token = Prompt.ask("  Enter Telegram Bot Token", default=settings.get("telegram_token") or "")
+            if token: settings["telegram_token"] = token
+        elif idx == 3:
+            chat_id = Prompt.ask("  Enter Telegram Chat ID", default=settings.get("telegram_chat_id") or "")
+            if chat_id: settings["telegram_chat_id"] = chat_id
+        elif idx == 4:
             toggle_dev_mode()
         else:
             break
@@ -327,7 +355,14 @@ def main():
     else:
         settings["workers"] = args.workers
         show_banner()
-        run_scan(args.tickers, console, render_report)
+        results = run_scan(args.tickers, console, render_report)
+        
+        # Telegram Notification
+        notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
+        if notifier.is_configured():
+            with console.status("[bold cyan]Sending to Telegram...[/]"):
+                report_text = notifier.format_analysis_report(results)
+                notifier.send_message(report_text)
 
 
 if __name__ == "__main__":
