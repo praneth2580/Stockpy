@@ -1,0 +1,27 @@
+name: StockPy Daily Scan
+
+on:
+  schedule:
+    # Runs every day at 10:00 UTC (adjust if needed)
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-stockpy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run StockPy daily top-50 scan
+        run: python main.py --top50
+

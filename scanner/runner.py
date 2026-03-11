@@ -9,6 +9,7 @@ from scanner.data_fetcher import fetch_stock_data
 from scanner.indicators import calculate_indicators
 from scanner.news import fetch_news_sentiment
 from scanner.evaluator import evaluate_stock
+from scanner.screener import pick_top_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ settings = {
     "workers": 3,
     "period": "1y",
     "telegram_token": "5710041825:AAEulSFLC4TBEidHKYcmsmBht-u7_AJUbj4",
-    "telegram_chat_id": "5710041825",
+    "telegram_chat_id": "1175853690",
 }
 
 def process_ticker(ticker: str, period: str) -> dict:
@@ -87,3 +88,18 @@ def run_scan(tickers: list, console, render_report_callback):
 
     render_report_callback(results)
     return results
+
+
+def scan_and_rank(tickers: list, console, top_n: int = 10):
+    """
+    Runs the standard scan pipeline and then ranks the results,
+    returning the top N candidates along with the full result set.
+    """
+
+    def _noop_render(_results):
+        # We don't want to render the full report here; caller decides.
+        pass
+
+    results = run_scan(tickers, console, _noop_render)
+    top = pick_top_candidates(results, top_n=top_n)
+    return top, results

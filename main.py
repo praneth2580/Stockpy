@@ -16,7 +16,7 @@ from rich import box
 from simple_term_menu import TerminalMenu
 
 # Core runner logic
-from scanner.runner import run_scan, settings
+from scanner.runner import run_scan, scan_and_rank, settings
 from scanner.notifier import TelegramNotifier
 
 # ─── Logging Setup ──────────────────────────────────────────
@@ -90,6 +90,21 @@ NSE_POPULAR = [
     "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS",
     "LT.NS", "HCLTECH.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS",
     "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS", "WIPRO.NS", "BAJFINANCE.NS",
+]
+
+# Rough universe of 50 large / liquid Indian stocks (NSE tickers),
+# used for automatic "top N" screening.
+NSE_TOP_50 = [
+    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS",
+    "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS",
+    "LT.NS", "HCLTECH.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS",
+    "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS", "WIPRO.NS", "BAJFINANCE.NS",
+    "POWERGRID.NS", "NESTLEIND.NS", "BAJAJFINSV.NS", "ONGC.NS", "ADANIENT.NS",
+    "ADANIPORTS.NS", "COALINDIA.NS", "JSWSTEEL.NS", "NTPC.NS", "M&M.NS",
+    "TATAMOTORS.NS", "TATASTEEL.NS", "HDFCLIFE.NS", "SBILIFE.NS", "GRASIM.NS",
+    "BPCL.NS", "BRITANNIA.NS", "DIVISLAB.NS", "DRREDDY.NS", "EICHERMOT.NS",
+    "HEROMOTOCO.NS", "HINDALCO.NS", "UPL.NS", "SHREECEM.NS", "CYIENT.NS",
+    "PIDILITIND.NS", "DLF.NS", "BANKBARODA.NS", "INDUSINDBK.NS", "VEDL.NS",
 ]
 
 # ─── UI Helpers ─────────────────────────────────────────────
@@ -275,6 +290,102 @@ def handle_quick_scan():
                 notifier.send_message(report_text)
 
 
+def handle_top_candidates():
+    show_banner()
+    console.print("  [accent]🔥  Top 10 Candidates from NSE Top 50[/accent]\n")
+
+    top, results = scan_and_rank(NSE_TOP_50, console, top_n=10)
+
+    # Render a compact summary table for the top candidates in the terminal
+    table = Table(
+        title="[bold magenta]Top 10 Candidates[/bold magenta]",
+        box=box.SIMPLE_HEAVY,
+        border_style="magenta",
+        padding=(0, 1),
+    )
+    table.add_column("#", justify="right", style="dim", width=3)
+    table.add_column("Ticker", style="bold white", min_width=10)
+    table.add_column("Score", justify="right", style="green", min_width=8)
+    table.add_column("Price", justify="right", style="white", min_width=10)
+    table.add_column("RSI", justify="center", min_width=7)
+    table.add_column("Signal", justify="center", min_width=10)
+
+    for rank, (score, res) in enumerate(top, start=1):
+        ticker = res["ticker"]
+        ev = res["evaluation"]
+        tech = ev.get("technicals", {})
+        pros = ev.get("pros", []) or []
+        cons = ev.get("cons", []) or []
+
+        close = tech.get("close")
+        rsi = tech.get("rsi")
+
+        if len(pros) > len(cons):
+            signal = "[green]▲ Bullish[/green]"
+        elif len(cons) > len(pros):
+            signal = "[red]▼ Bearish[/red]"
+        else:
+            signal = "[yellow]◆ Neutral[/yellow]"
+
+        price_str = f"₹{close:,.2f}" if close is not None else "—"
+        rsi_str = f"{rsi:.1f}" if rsi is not None else "—"
+
+        table.add_row(
+            str(rank),
+            ticker,
+            f"{score:.2f}",
+            price_str,
+            rsi_str,
+            signal,
+        )
+
+    console.print(table)
+    console.print()
+
+    # Build a concise Telegram-only summary: header + top 10 details + one-line "others" list.
+    notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
+    if notifier.is_configured():
+        with console.status("[bold cyan]Sending summary to Telegram...[/]"):
+            lines: list[str] = []
+            lines.append("<b>📊 Stockpy — Top 10 Candidates</b>")
+            lines.append("<i>From NSE Top 50 universe</i>")
+            lines.append("")
+
+            for rank, (score, res) in enumerate(top, start=1):
+                ticker = res["ticker"]
+                ev = res["evaluation"]
+                tech = ev.get("technicals", {})
+                pros = ev.get("pros", []) or []
+                cons = ev.get("cons", []) or []
+
+                close = tech.get("close")
+                rsi = tech.get("rsi")
+
+                if len(pros) > len(cons):
+                    signal = "🟢 Bullish"
+                elif len(cons) > len(pros):
+                    signal = "🔴 Bearish"
+                else:
+                    signal = "🟡 Neutral"
+
+                price_str = f"₹{close:,.2f}" if close is not None else "—"
+                rsi_str = f"{rsi:.1f}" if rsi is not None else "—"
+
+                lines.append(f"{rank}. <b>{ticker}</b> — {signal}  (Score: {score:.2f})")
+                lines.append(f"   Price: {price_str} | RSI: {rsi_str}")
+                if pros:
+                    lines.append(f"   ✅ {pros[0]}")
+                if cons:
+                    lines.append(f"   ⚠️ {cons[0]}")
+                lines.append("")
+
+            # One-line list of all tickers scanned, to preserve context without huge blocks.
+            all_tickers = ", ".join(sorted(r["ticker"] for r in results))
+            lines.append(f"<i>Scanned universe:</i> {all_tickers}")
+
+            notifier.send_message("\n".join(lines))
+
+
 def handle_settings():
     while True:
         options = [
@@ -326,14 +437,27 @@ def handle_help():
 
 def interactive_mode():
     show_banner()
-    items = ["🔍  Scan Stocks", "📋  Quick Scan", "⚙️   Settings", "ℹ️   Help", "🚪  Exit"]
+    items = [
+        "🔍  Scan Stocks",
+        "📋  Quick Scan",
+        "🔥  Top 10 from Top 50",
+        "⚙️   Settings",
+        "ℹ️   Help",
+        "🚪  Exit",
+    ]
     while True:
         idx = arrow_menu("What would you like to do?", items)
-        if idx == 0: handle_scan()
-        elif idx == 1: handle_quick_scan()
-        elif idx == 2: handle_settings()
-        elif idx == 3: handle_help()
-        elif idx == 4 or idx == -1:
+        if idx == 0:
+            handle_scan()
+        elif idx == 1:
+            handle_quick_scan()
+        elif idx == 2:
+            handle_top_candidates()
+        elif idx == 3:
+            handle_settings()
+        elif idx == 4:
+            handle_help()
+        elif idx == 5 or idx == -1:
             console.print("\n  [muted]Goodbye! 👋[/muted]\n")
             sys.exit(0)
         console.print()
@@ -342,21 +466,29 @@ def interactive_mode():
 
 def main():
     parser = argparse.ArgumentParser(description="Stockpy — Indian stock market scanner")
-    parser.add_argument('tickers', nargs='*', help="Stock tickers")
-    parser.add_argument('--workers', type=int, default=settings["workers"], help="Threads")
-    parser.add_argument('--interactive', '-i', action='store_true', help="Interactive menu")
-    parser.add_argument('--dev', action='store_true', help="Verbose logging")
+    parser.add_argument("tickers", nargs="*", help="Stock tickers")
+    parser.add_argument("--workers", type=int, default=settings["workers"], help="Threads")
+    parser.add_argument("--interactive", "-i", action="store_true", help="Interactive menu")
+    parser.add_argument("--dev", action="store_true", help="Verbose logging")
+    parser.add_argument(
+        "--top50",
+        action="store_true",
+        help="Run non-interactive daily scan on NSE Top 50 and send Telegram summary.",
+    )
 
     args = parser.parse_args()
     setup_logging(dev=args.dev)
 
-    if args.interactive or not args.tickers:
+    if args.top50:
+        # Non-interactive daily scan used by GitHub Actions / cron.
+        handle_top_candidates()
+    elif args.interactive or not args.tickers:
         interactive_mode()
     else:
         settings["workers"] = args.workers
         show_banner()
         results = run_scan(args.tickers, console, render_report)
-        
+
         # Telegram Notification
         notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
         if notifier.is_configured():
