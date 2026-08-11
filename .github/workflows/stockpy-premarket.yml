@@ -87,17 +87,14 @@ jobs:
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "job=${{ inputs.job }}" >> "$GITHUB_OUTPUT"
-            if [ "${{ inputs.force }}" = "true" ]; then
-              echo "force_flag=--force" >> "$GITHUB_OUTPUT"
-            else
-              echo "force_flag=" >> "$GITHUB_OUTPUT"
-            fi
+            # Manual runs always force so duplicate/holiday guards don't silently skip Telegram.
+            echo "force_flag=--force" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch → forcing job (ignore holiday/duplicate locks)"
             exit 0
           fi
 
           echo "force_flag=" >> "$GITHUB_OUTPUT"
 
-          # Prefer IST window; fall back to UTC cron minute (30 / 45 / 00).
           if [ "$IST_HOUR" = "09" ] && [ "$IST_MIN" -lt 10 ]; then
             JOB=premarket
           elif [ "$IST_HOUR" = "09" ] && [ "$IST_MIN" -lt 25 ]; then
@@ -132,26 +129,45 @@ jobs:
         env:
           FORCE_FLAG: ${{ steps.slot.outputs.force_flag }}
 
-      - name: Telegram config check
+      - name: Telegram ping (prove secrets work)
+        id: tg_ping
         run: |
           python - <<'PY'
           import os
-          print("=== Telegram env diagnostics (secrets masked) ===")
-          token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-          chat = os.getenv("TELEGRAM_CHAT_ID", "")
-          print(f"TELEGRAM_BOT_TOKEN set: {bool(token.strip())} len={len(token.strip())}")
-          print(f"TELEGRAM_CHAT_ID set: {bool(chat.strip())} value={chat.strip() or '(empty)'}")
+          import sys
+          from scanner.notifier import ping_telegram
+
+          token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+          chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+          print("=== Telegram env diagnostics ===")
+          print(f"TELEGRAM_BOT_TOKEN set: {bool(token)} len={len(token)}")
+          print(f"TELEGRAM_CHAT_ID set: {bool(chat)} value={chat or '(empty)'}")
           print(f"PREMARKET_NOTIFY={os.getenv('PREMARKET_NOTIFY')}")
-          if not token.strip() or not chat.strip():
-              print("::warning title=Telegram secrets missing::Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in repo Actions secrets.")
+
+          if not token or not chat:
+              print("::error title=Telegram secrets missing::"
+                    "Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID under "
+                    "Settings → Secrets and variables → Actions")
+              sys.exit(1)
+
+          ok = ping_telegram(token, chat)
+          if not ok:
+              print("::error title=Telegram ping failed::"
+                    "If TELEGRAM_CHAT_ID is @channel: add the bot as Channel Admin "
+                    "with Post Messages enabled. Token alone is not enough.")
+              sys.exit(1)
+          print("Telegram ping delivered. Main report will also notify.")
           PY
 
       - name: Run F&O job
+        id: run_job
         if: steps.slot.outputs.job == 'accuracy' || steps.calendar.outputs.trading_day == 'true'
         run: |
           JOB="${{ steps.slot.outputs.job }}"
           FORCE="${{ steps.slot.outputs.force_flag }}"
+          echo "========================================"
           echo "Running job=$JOB force='$FORCE'"
+          echo "========================================"
           case "$JOB" in
             premarket) python main.py --premarket $FORCE --dev ;;
             open)      python main.py --premarket-open $FORCE --dev ;;
@@ -159,10 +175,15 @@ jobs:
             accuracy)  python main.py --premarket-accuracy ;;
             *) echo "Unknown job: $JOB"; exit 1 ;;
           esac
+          echo "========================================"
+          echo "Job finished. Search log for [telegram] lines above."
+          echo "========================================"
 
       - name: Skipped (non-trading day)
         if: steps.slot.outputs.job != 'accuracy' && steps.calendar.outputs.trading_day != 'true'
-        run: echo "Skipping — not an NSE trading day (use workflow_dispatch + force to override)."
+        run: |
+          echo "::warning title=Job skipped::Not an NSE trading day. Re-run via workflow_dispatch (force is automatic on manual runs)."
+          echo "Skipping — not an NSE trading day."
 
       - name: Upload premarket DB artifact
         if: always()

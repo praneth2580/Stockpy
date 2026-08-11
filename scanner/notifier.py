@@ -25,7 +25,7 @@ def _mask_chat(chat_id: str | None) -> str:
         return "(empty)"
     c = str(chat_id).strip()
     if c.startswith("@"):
-        return c  # public username is not secret
+        return c
     if len(c) <= 4:
         return "***"
     return f"{c[:2]}…{c[-2:]} (len={len(c)})"
@@ -115,11 +115,22 @@ class TelegramNotifier:
             _ci_print("SUCCESS: all parts delivered.")
         else:
             _ci_print("FAILURE: one or more parts were not delivered. See errors above.")
-            # Make failures obvious in Actions annotations
             if os.getenv("GITHUB_ACTIONS"):
+                chat = self.chat_id or ""
+                if str(chat).startswith("@"):
+                    hint = (
+                        f"Chat id {chat} looks like a public channel/group. "
+                        "In Telegram: open the channel → Administrators → Add Admin → "
+                        "select your bot → enable 'Post Messages'. "
+                        "Then re-run the workflow."
+                    )
+                else:
+                    hint = (
+                        "For a private chat: open the bot and press Start, then use the numeric chat id. "
+                        "For a channel: use @channelusername and add the bot as admin with Post Messages."
+                    )
                 print(
-                    "::error title=Telegram notification failed::"
-                    "Check TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID and bot membership in the chat.",
+                    f"::error title=Telegram notification failed::{hint}",
                     flush=True,
                 )
         return success
@@ -301,3 +312,23 @@ def send_or_log(notifier: TelegramNotifier, text: str, *, label: str = "notifica
     ok = notifier.send_message(text)
     _ci_print(f"--- finished {label}: {'OK' if ok else 'FAILED'} ---")
     return ok
+
+
+def ping_telegram(token: str | None = None, chat_id: str | None = None) -> bool:
+    """
+    Send a short connectivity test message.
+    Used by GitHub Actions to prove secrets + bot access before the main job.
+    """
+    token = token if token is not None else os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = chat_id if chat_id is not None else os.getenv("TELEGRAM_CHAT_ID", "")
+    notifier = TelegramNotifier(token, chat_id)
+    if not notifier.is_configured():
+        return False
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return send_or_log(
+        notifier,
+        f"<b>Stockpy Telegram ping</b>\nConnectivity OK at {now}",
+        label="ci ping",
+    )

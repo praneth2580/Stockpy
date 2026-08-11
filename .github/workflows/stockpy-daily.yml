@@ -49,19 +49,32 @@ jobs:
               f.write(f"trading_day={'true' if open_ else 'false'}\n")
           PY
 
-      - name: Telegram config check
+      - name: Telegram ping (prove secrets work)
         run: |
           python - <<'PY'
           import os
-          print("=== Telegram env diagnostics (secrets masked) ===")
-          token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-          chat = os.getenv("TELEGRAM_CHAT_ID", "")
-          print(f"TELEGRAM_BOT_TOKEN set: {bool(token.strip())} len={len(token.strip())}")
-          print(f"TELEGRAM_CHAT_ID set: {bool(chat.strip())} value={chat.strip() or '(empty)'}")
-          if not token.strip() or not chat.strip():
-              print("::warning title=Telegram secrets missing::Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in repo Actions secrets.")
-          else:
-              print("Secrets present. Delivery result will appear as [telegram] lines below.")
+          import sys
+          from scanner.notifier import ping_telegram
+
+          token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+          chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+          print("=== Telegram env diagnostics ===")
+          print(f"TELEGRAM_BOT_TOKEN set: {bool(token)} len={len(token)}")
+          print(f"TELEGRAM_CHAT_ID set: {bool(chat)} value={chat or '(empty)'}")
+
+          if not token or not chat:
+              print("::error title=Telegram secrets missing::"
+                    "Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID under "
+                    "Settings → Secrets and variables → Actions")
+              sys.exit(1)
+
+          ok = ping_telegram(token, chat)
+          if not ok:
+              print("::error title=Telegram ping failed::"
+                    "If TELEGRAM_CHAT_ID is @channel: add the bot as Channel Admin "
+                    "with Post Messages enabled. Token alone is not enough.")
+              sys.exit(1)
+          print("Telegram ping delivered.")
           PY
 
       - name: Run daily top-50 scan
