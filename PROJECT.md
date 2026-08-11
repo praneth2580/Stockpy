@@ -1,219 +1,172 @@
 # Project Flow — Stockpy
 
-This document explains the complete execution flow of Stockpy, step by step, from launch to final report output.
+This document explains Stockpy’s execution flow: equity scanning and F&O pre-market analysis.
 
 ---
 
 ## 1. Entry Point — `main.py`
 
-When the user runs `python3 main.py`, the `main()` function is invoked. `main.py` is now focused purely on the **User Interface** and **CLI coordination**, while the **Execution Engine** has been moved to `scanner/runner.py`.
+`main.py` owns the **CLI / UI**. Equity execution lives in `scanner/runner.py`. F&O pre-market execution lives in `scanner/premarket/`.
 
 ### 1.1 Argument Parsing
 
 ```
-python3 main.py [tickers...] [--workers N] [--interactive/-i] [--dev]
+python3 main.py [tickers...] [options]
 ```
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `tickers` | _(none)_ | Space-separated stock tickers (e.g. `RELIANCE.NS TCS.NS`) |
-| `--workers` | `3` | Number of concurrent threads |
-| `--interactive` / `-i` | `false` | Force interactive menu mode |
-| `--dev` | `false` | Enable verbose debug logging |
+| Argument | Description |
+|----------|-------------|
+| `tickers` | Equity symbols (e.g. `RELIANCE.NS TCS.NS`) |
+| `--workers N` | Thread pool size (equity) |
+| `--interactive` / `-i` | Force interactive menu |
+| `--dev` | Verbose logging → console + `stockpy.log` |
+| `--top50` | Non-interactive NSE Top 50 → top 10 + Telegram |
+| `--premarket` | F&O ~9:00 pre-market report |
+| `--premarket-open` | 9:15 open snapshot |
+| `--premarket-confirm` | 9:30 confirmation |
+| `--premarket-accuracy` | Historical accuracy dashboard |
+| `--force` | Ignore weekend / holiday / duplicate guards |
+| `--no-notify` | Skip Telegram |
 
-### 1.2 Logging Initialization
+### 1.2 Logging
 
-`setup_logging(dev)` is called:
-- **Normal mode**: Sets console handler to `WARNING`. File handler is set to `INFO`.
-- **Dev mode**: Sets both console and file handlers to `DEBUG`.
-- **File Persistence**: All logs are appended to `stockpy.log` in the project root.
-- **Suppression**: Noisy third-party loggers (`yfinance`, `peewee`, `urllib3`, `curl_cffi`) are suppressed at `WARNING` level across all handlers.
+Same as before: root logger + console + `stockpy.log`; noisy libs suppressed.
 
 ### 1.3 Mode Selection
 
 | Condition | Mode |
 |-----------|------|
-| No tickers provided, or `--interactive` flag | **Interactive mode** |
-| Tickers provided on command line | **CLI mode** |
+| `--premarket*` flags | Pre-market / confirmation / accuracy |
+| `--top50` | Equity daily screen |
+| No tickers or `--interactive` | Interactive menu |
+| Tickers on CLI | Equity CLI scan |
 
 ---
 
 ## 2. Interactive Mode
 
-### 2.1 Banner Display
-
-`show_banner()` clears the terminal and prints the ASCII art logo, subtitle, and a dev mode indicator if active.
-
-### 2.2 Main Menu Loop
-
-An arrow-key navigable menu is displayed using `simple-term-menu`:
+Menu options:
 
 ```
-❯ 🔍  Scan Stocks
-  📋  Quick Scan  (Popular NSE Stocks)
-  ⚙️   Settings
-  ℹ️   Help
-  🚪  Exit
+❯ Scan Stocks
+  Quick Scan
+  Top 10 from Top 50
+  F&O Pre-Market Report
+  Pre-Market Accuracy
+  Settings
+  Help
+  Exit
 ```
 
-The user navigates with `↑ ↓` and selects with `Enter`. The loop continues until the user selects Exit or presses `Esc`.
-
-### 2.3 Scan Stocks
-
-1. User is prompted to type ticker symbols separated by spaces.
-2. Input is split into a list.
-3. `run_scan(tickers)` is called (see Section 4).
-
-### 2.4 Quick Scan
-
-1. A list of 20 popular NSE stocks is displayed as a multi-select menu.
-2. User selects stocks with `Space` and confirms with `Enter`.
-3. Selected tickers are passed to `run_scan()`.
-
-### 2.5 Settings
-
-An arrow-key sub-menu allows changing:
-
-| Setting | Options | Default |
-|---------|---------|---------|
-| Workers | 1–10 | 3 |
-| Data Period | 1mo, 3mo, 6mo, 1y, 2y, 5y | 1y |
-| Dev Mode | Toggle ON/OFF | OFF |
-
-Changes take effect immediately for subsequent scans.
-
-### 2.6 Help
-
-Displays a `rich` panel with pipeline explanation, ticker format guide, CLI usage examples, and keyboard shortcuts.
+Settings still adjust workers, period, Telegram token/chat id, and dev mode (backed by `scanner/config.py` / env).
 
 ---
 
-## 3. CLI Mode
+## 3. Equity Scan Pipeline — `scanner/runner.py`
 
-When tickers are provided directly:
-1. `settings["workers"]` is set from `--workers`.
-2. The banner is displayed.
-3. `run_scan(tickers)` is called directly.
+Unchanged high-level flow:
+
+```
+fetch (data_fetcher) → indicators → news (VADER) → evaluate → optional screener
+```
+
+Parallelism via `ThreadPoolExecutor`. Results rendered in `main.render_report` and optionally sent with `TelegramNotifier`.
+
+News is **live** (`yf.Ticker.news` + VADER), not a stub.
 
 ---
 
-## 4. Scan Pipeline — `runner.py`
+## 4. F&O Pre-Market Pipeline — `scanner/premarket/`
 
-The core scanning logic resides in `scanner/runner.py`.
+### 4.1 Trading-day & duplicate guards
 
-### 4.1 Configuration Display
+`calendar.is_trading_day` — weekends + static NSE holiday set (`Asia/Kolkata`).  
+`db.try_acquire_job(job_type, date)` — SQLite unique lock prevents double runs.  
+`--force` bypasses both for local testing.
 
-A panel is printed showing the tickers being scanned, the number of workers, and the data period.
+### 4.2 09:00 — `pipeline.generate_premarket_report`
 
-### 4.2 Thread Pool Execution
+Collectors run independently (failure → unavailable, pipeline continues):
 
-Each ticker is submitted as an independent task to the thread pool (`ThreadPoolExecutor`).
-- Tasks execute **concurrently**.
-- A `rich` progress bar updates as each ticker completes.
-- Results are gathered and returned to `main.py` for rendering.
+| Collector | Module | Source |
+|-----------|--------|--------|
+| NIFTY / BANK NIFTY | `collectors/indices.py` | yfinance |
+| India VIX | `collectors/indices.py` | yfinance `^INDIAVIX` |
+| Globals / FX / commodities | `collectors/global_markets.py` | yfinance |
+| GIFT Nifty | same | only if `GIFT_NIFTY_SYMBOL` set |
+| FII / DII | `collectors/fii_dii.py` | NSE API |
+| Option chain | `collectors/option_chain.py` | NSE API (best-effort) |
+| Events / expiry flags | `collectors/events.py` | calendar + chain expiry |
 
-### 4.3 Individual Ticker Pipeline — `process_ticker(ticker, period)`
+Then analysis:
 
-For each ticker, these four steps execute sequentially:
+| Step | Module |
+|------|--------|
+| Gap class | `analysis/gap.py` |
+| Levels (PDH/L, pivots, OI) | `analysis/levels.py` |
+| Regime | `analysis/regime.py` |
+| Checklist | `analysis/checklist.py` |
+| Weighted score + bias label | `analysis/scoring.py` |
+| Confidence | `analysis/confidence.py` |
+| Text report | `report.py` |
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Step 1: FETCH DATA        (data_fetcher.py)            │
-│  Step 2: COMPUTE INDICATORS (indicators.py)             │
-│  Step 3: FETCH NEWS         (news.py)                   │
-│  Step 4: EVALUATE           (evaluator.py)              │
-└─────────────────────────────────────────────────────────┘
-```
+Persist via `db.save_report` → `data/premarket.db` (configurable).  
+Optional Telegram via existing notifier + `format_premarket_telegram`.
 
-#### Step 1 — Fetch Data (`scanner/data_fetcher.py`)
+### 4.3 09:15 — `confirm.run_open_snapshot`
 
-- Calls `yf.Ticker(ticker).history(period=period)`.
-- Returns a pandas DataFrame with columns: `Open`, `High`, `Low`, `Close`, `Volume`, `Dividends`, `Stock Splits`.
-- Returns `None` if the ticker is invalid or the API fails.
+Fetches actual open/last for index symbols, compares to expected open and pre-market bias → updates report row (`open_915_result`).
 
-#### Step 2 — Compute Indicators (`scanner/indicators.py`)
+### 4.4 09:30 — `confirm.run_confirmation`
 
-- Takes the raw DataFrame and adds new columns:
-  - `SMA50` — 50-day Simple Moving Average of `Close`
-  - `SMA200` — 200-day Simple Moving Average of `Close`
-  - `RSI` — 14-day Relative Strength Index
-  - `Volume_Avg_20` — 20-day rolling average of `Volume`
-- Returns the enriched DataFrame.
+Combines open + post-open move vs bias → `Confirmed` / `Partially confirmed` / `Invalidated` / `Insufficient data`.
 
-#### Step 3 — Fetch News (`scanner/news.py`)
+### 4.5 Accuracy — `accuracy.py`
 
-- Currently a **mock implementation** that returns a deterministic sentiment.
-- Returns a dict: `{"sentiment": "Positive"|"Negative"|"Neutral", "summary": "..."}`.
-- Designed to be replaced with a real news API integration.
-
-#### Step 4 — Evaluate (`scanner/evaluator.py`)
-
-- Reads the latest row of the indicator-enriched DataFrame.
-- Applies heuristic rules to generate a list of `pros` and `cons`.
-- Incorporates the news sentiment result.
-- Returns: `{"pros": [...], "cons": [...]}`.
-
-### 4.4 Result Aggregation
-
-Results are collected as they complete and stored in a list. Each result contains:
-
-```python
-{
-    "ticker": "RELIANCE.NS",
-    "status": "success" | "failed",
-    "evaluation": {"pros": [...], "cons": [...]},  # if success
-    "error": "..."                                   # if failed
-}
-```
+Aggregates stored premarket rows: bias counts, 9:30 confirmation rate, directional accuracy, segments (expiry, high VIX, gap up/down, trending, range). Only meaningful after enough confirmed outcomes exist.
 
 ---
 
-## 5. Report Rendering — `render_report(results)`
+## 5. Configuration — `scanner/config.py`
 
-### 5.1 Overview Table
+Loads `.env` (via `python-dotenv`) into:
 
-A summary table is printed with columns:
+- `DEFAULT_SETTINGS` — equity workers / period / Telegram (also mirrored into `runner.settings`)
+- `PREMARKET` — symbols, times, gap bands, VIX/PCR thresholds, score weights, DB path, retries
 
-| Column | Description |
-|--------|-------------|
-| Ticker | Stock symbol |
-| Signal | ▲ Bullish (more pros) / ▼ Bearish (more cons) / ◆ Neutral (equal) |
-| Pros | Count of pro signals |
-| Cons | Count of con signals |
-| RSI | Current RSI value |
-
-### 5.2 Detailed Stock Cards
-
-For each stock, a bordered panel is printed:
-- **Title**: badge (🟢/🔴/🟡) + ticker name
-- **Body**: lists each Pro (✔) and Con (✖)
-- **Subtitle**: data period used
-- **Border color**: green (bullish), red (bearish), yellow (neutral)
+See `.env.example`.
 
 ---
 
-## 6. Error Handling
+## 6. Scheduling
 
-| Layer | Handling |
+| Workflow | Role |
+|----------|------|
+| `.github/workflows/ci.yml` | Pytest on push/PR |
+| `.github/workflows/stockpy-daily.yml` | Mon–Fri equity `--top50` (holiday skip) |
+| `.github/workflows/stockpy-premarket.yml` | Mon–Fri IST 09:00 / 09:15 / 09:30 + DB artifact restore |
+
+Secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Details: `.github/README.md`.
+
+---
+
+## 7. Error Handling (pre-market)
+
+| Layer | Behavior |
 |-------|----------|
-| `data_fetcher` | Returns `None` on API failure; logged as warning |
-| `process_ticker` | Wraps entire pipeline in try/except; returns `status: "failed"` |
-| `run_scan` | Catches exceptions from `future.result()`; adds error to results |
-| `render_report` | Displays error panel for failed tickers |
+| `retry.retry_call` | Transient retries with backoff; returns `None` on exhaustion |
+| Individual collectors | Isolated try/except in pipeline |
+| Missing data | Explicit `DATA UNAVAILABLE`; confidence reduced |
+| Duplicate job | Skipped with reason logged |
 
 ---
 
-## 7. Dev Mode Logging
+## 8. Manual Test Recipe
 
-When `--dev` is active (or toggled from Settings), the console displays timestamped logs for every pipeline action:
-
+```bash
+python3 main.py --premarket --force --no-notify
+python3 main.py --premarket-open --force --no-notify
+python3 main.py --premarket-confirm --force --no-notify
+python3 main.py --premarket-accuracy
+python3 -m pytest tests/ -q
 ```
-16:57:02 │ DEBUG    │ __main__             │ [pipeline] Start → RELIANCE.NS
-16:57:02 │ DEBUG    │ __main__             │ [fetch]     Downloading 1y of data
-16:57:03 │ DEBUG    │ __main__             │ [indicators] Computing SMA / RSI
-16:57:03 │ INFO     │ scanner.news         │ Fetching news sentiment
-16:57:03 │ DEBUG    │ __main__             │ [evaluate]  Generating pros/cons
-16:57:03 │ DEBUG    │ __main__             │ [pipeline] Done ✔ RELIANCE.NS
-```
-
-Third-party library logs are suppressed to keep output clean.

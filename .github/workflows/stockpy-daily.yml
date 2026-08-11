@@ -1,30 +1,58 @@
-name: StockPy Daily Scan
+name: StockPy Daily Equity Scan
+
+# NSE Top-50 screen after Indian market hours (approx).
+# 10:00 UTC ≈ 15:30 IST (near cash close). Mon–Fri only.
 
 on:
   schedule:
-    # Runs every day at 10:00 UTC (adjust if needed)
-    - cron: "0 10 * * *"
+    - cron: "0 10 * * 1-5"
   workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  STOCKPY_WORKERS: "4"
+  STOCKPY_PERIOD: "1y"
+  TZ: Asia/Kolkata
 
 jobs:
-  run-stockpy:
+  top50-scan:
+    name: NSE Top-50 → Top-10
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Python
+      - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.10"
+          python-version: "3.12"
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run StockPy daily top-50 scan
-        run: python main.py --top50
+      - name: Skip if NSE holiday / weekend
+        id: calendar
+        run: |
+          python - <<'PY'
+          import os
+          from scanner.premarket.calendar import is_trading_day, now_ist
 
+          d = now_ist().date()
+          open_ = is_trading_day(d)
+          print(f"date={d.isoformat()} trading_day={open_}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"trading_day={'true' if open_ else 'false'}\n")
+          PY
+
+      - name: Run daily top-50 scan
+        if: steps.calendar.outputs.trading_day == 'true'
+        run: python main.py --top50 --dev
+
+      - name: Skipped (non-trading day)
+        if: steps.calendar.outputs.trading_day != 'true'
+        run: echo "Skipping equity scan — not an NSE trading day."

@@ -5,6 +5,7 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from rich import box
 
+from scanner.config import DEFAULT_SETTINGS, apply_config_to_settings
 from scanner.data_fetcher import fetch_stock_data
 from scanner.indicators import calculate_indicators
 from scanner.news import fetch_news_sentiment
@@ -14,12 +15,8 @@ from scanner.screener import pick_top_candidates
 logger = logging.getLogger(__name__)
 
 # ─── Scanning State ─────────────────────────────────────────
-settings = {
-    "workers": 3,
-    "period": "1y",
-    "telegram_token": "5710041825:AAEulSFLC4TBEidHKYcmsmBht-u7_AJUbj4",
-    "telegram_chat_id": "1175853690",
-}
+# Defaults come from env / .env via scanner.config (Telegram included).
+settings = apply_config_to_settings(dict(DEFAULT_SETTINGS))
 
 def process_ticker(ticker: str, period: str) -> dict:
     """Full analysis pipeline for a single ticker."""

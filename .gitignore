@@ -113,11 +113,15 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv312
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+.pip_pkgs/
+.pytest_cache/
+
 
 # Spyder project settings
 .spyderproject
@@ -151,3 +155,7 @@ cython_debug/
 
 # Project specific logs
 stockpy.log
+
+# Premarket local DB
+data/
+*.db

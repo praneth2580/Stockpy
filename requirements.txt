@@ -5,3 +5,5 @@ rich
 simple-term-menu
 vaderSentiment
 requests
+python-dotenv
+pytest

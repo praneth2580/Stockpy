@@ -1,164 +1,163 @@
 # Analysis Methodology — Stockpy
 
-This document explains every individual value that Stockpy evaluates, how it is calculated, and what it tells you about a stock.
+This document covers (1) equity Pros/Cons evaluation and (2) F&O pre-market scoring.
 
 ---
 
-## Overview
+# Part A — Equity Scanner
 
-Stockpy's evaluation pipeline produces **Pros** and **Cons** for each stock by examining:
+Stockpy’s equity pipeline produces **Pros** and **Cons** from:
 
-1. **Trend** — Is the stock trending up or down over time?
-2. **Momentum** — Is the stock overbought, oversold, or neutral?
-3. **Volume** — Is there unusual trading activity?
-4. **Sentiment** — What does the recent news say?
+1. **Trend** — SMA50 vs SMA200  
+2. **Momentum** — RSI (14)  
+3. **Volume** — vs 20-day average  
+4. **Sentiment** — recent headlines (VADER)
 
-Each indicator is evaluated independently using simple, deterministic rules. The results are combined into a human-readable report.
-
----
+Each rule is deterministic and independent. The overview signal is a simple pro/con count (not a price prediction).
 
 ## Technical Indicators
 
-### 1. SMA50 — 50-Day Simple Moving Average
+### SMA50 / SMA200
 
-**What it is:**
-The average closing price over the last 50 trading days.
-
-**Calculation:**
 ```
-SMA50 = mean(Close[t-49] ... Close[t])
+SMA50  = mean(Close[t-49] … Close[t])
+SMA200 = mean(Close[t-199] … Close[t])
 ```
 
-**What it tells you:**
-Represents the **short-to-medium term trend**. When the current price is above SMA50, the stock is generally considered to be in a short-term uptrend. When below, a downtrend.
+| Condition | Signal |
+|-----------|--------|
+| SMA50 > SMA200 | Pro — long-term uptrend (golden-cross style) |
+| SMA50 < SMA200 | Con — long-term downtrend |
 
-**Used in evaluation:** Compared against SMA200 (see Golden/Death Cross below).
+### RSI (14)
 
----
-
-### 2. SMA200 — 200-Day Simple Moving Average
-
-**What it is:**
-The average closing price over the last 200 trading days.
-
-**Calculation:**
 ```
-SMA200 = mean(Close[t-199] ... Close[t])
+RS  = avg_gain / avg_loss
+RSI = 100 - (100 / (1 + RS))
 ```
 
-**What it tells you:**
-Represents the **long-term trend**. Institutional investors often use the 200-day MA as a benchmark. A stock trading above its SMA200 is generally considered to be in a healthy long-term trend.
+| Range | Signal |
+|-------|--------|
+| > 70 | Con — overbought |
+| < 30 | Pro — potentially oversold |
+| Mid bands | Neutral / weak momentum messaging per `evaluator.py` |
 
----
+### Volume vs 20-day average
 
-### 3. SMA50 vs SMA200 — Trend Signal (Golden Cross / Death Cross)
-
-**Evaluation rule:**
-
-| Condition | Signal | Meaning |
-|-----------|--------|---------|
-| SMA50 **>** SMA200 | ✔ Pro: Long-term uptrend | The shorter-term average has crossed above the longer-term average. This is known as a **Golden Cross** and generally indicates bullish momentum. The stock's recent performance is outpacing its historical average. |
-| SMA50 **<** SMA200 | ✖ Con: Long-term downtrend | The shorter-term average is below the longer-term average. This is known as a **Death Cross** and generally indicates bearish momentum. The stock's recent performance is weaker than its historical average. |
-
-**Why it matters:**
-- A Golden Cross is one of the most widely followed technical signals. It suggests that buying pressure is building.
-- A Death Cross suggests that selling pressure is dominant and the trend may continue downward.
-- These signals are lagging indicators — they confirm trends rather than predict them.
-
----
-
-### 4. RSI — Relative Strength Index (14-day)
-
-**What it is:**
-A momentum oscillator that measures the speed and magnitude of recent price changes. It ranges from 0 to 100.
-
-**Calculation:**
-```
-delta     = Close[t] - Close[t-1]
-avg_gain  = rolling_mean(positive deltas, window=14)
-avg_loss  = rolling_mean(negative deltas, window=14)
-RS        = avg_gain / avg_loss
-RSI       = 100 - (100 / (1 + RS))
-```
-
-**Evaluation rules:**
-
-| RSI Range | Signal | Meaning |
-|-----------|--------|---------|
-| **> 70** | ✖ Con: Overbought | The stock has gained value rapidly and may be due for a pullback or correction. Buyers may be exhausted. |
-| **< 30** | ✔ Pro: Potentially oversold | The stock has lost value rapidly and may be undervalued. Could represent a buying opportunity if fundamentals are sound. |
-| **30 – 70** | ✔ Pro: Neutral RSI | The stock is trading in a normal momentum range. No extreme buying or selling pressure detected. |
-
-**Why it matters:**
-- RSI helps identify when a stock might be stretched too far in either direction.
-- An overbought RSI doesn't mean the stock will fall immediately, but the risk of a reversal increases.
-- An oversold RSI doesn't guarantee a bounce, but combined with other positive signals, it can indicate value.
-- RSI is most useful when combined with trend analysis (SMA signals).
-
----
-
-### 5. Volume vs 20-Day Average Volume
-
-**What it is:**
-A comparison of the current day's trading volume against the 20-day rolling average volume.
-
-**Calculation:**
-```
-Volume_Avg_20 = rolling_mean(Volume, window=20)
-```
-
-**Evaluation rule:**
-
-| Condition | Signal | Meaning |
-|-----------|--------|---------|
-| Volume **> 1.5×** Volume_Avg_20 | ✔ Pro: Volume spike | Significantly higher trading activity than usual. This often precedes or confirms a meaningful price move. |
-| Volume **≤ 1.5×** Volume_Avg_20 | _(not reported)_ | Volume is within normal range. No signal generated. |
-
-**Why it matters:**
-- Volume is the **fuel behind price moves**. A price increase on high volume is more sustainable than one on low volume.
-- Volume spikes can indicate institutional buying/selling, breakout confirmation, or increased market interest.
-- A breakout above resistance on high volume is more trustworthy than one on average volume.
-- Conversely, a price drop on very high volume may indicate panic selling.
-
----
+| Condition | Signal |
+|-----------|--------|
+| Volume > 1.5 × Volume_Avg_20 | Pro — volume spike |
 
 ## News Sentiment
 
-### 6. News Sentiment Analysis
+Headlines from `yfinance` are scored with **VADER** (`scanner/news.py`). Positive → Pro, Negative → Con. (Older docs called this a stub; the live path is VADER + Yahoo news.)
 
-**What it is:**
-A classification of recent news headlines as Positive, Negative, or Neutral.
+## Equity Signal Aggregation
 
-> ⚠️ **Note:** The current implementation is a **mock/stub**. It returns deterministic sentiment based on the ticker hash. This is designed to be replaced with a real news API (e.g., NewsAPI, Google News, or Yahoo Finance headlines with NLP sentiment analysis).
+| Condition | UI signal |
+|-----------|-----------|
+| More Pros than Cons | ▲ Bullish |
+| More Cons than Pros | ▼ Bearish |
+| Equal | ◆ Neutral |
 
-**Evaluation rules:**
+This does **not** weight signal importance — use judgment.
 
-| Sentiment | Signal | Meaning |
-|-----------|--------|---------|
-| **Positive** | ✔ Pro | Recent news trends are optimistic. Positive media coverage, earnings beats, favorable analyst ratings, or sector tailwinds. |
-| **Negative** | ✖ Con | Recent news trends are pessimistic. Negative headlines, earnings misses, regulatory concerns, or management issues. |
-| **Neutral** | _(not reported)_ | News is mixed or absent. No signal generated. |
-
-**Why it matters:**
-- News sentiment captures information that price data alone cannot — regulatory changes, product launches, management scandals, sector trends.
-- Positive sentiment combined with positive technical signals creates a stronger case for the stock.
-- Negative sentiment can serve as a warning even when technical indicators look healthy.
+Top-N ranking (`screener.py`) applies numeric weights on top of the same features for `--top50` / Top 10 menu.
 
 ---
 
-## Signal Aggregation
+# Part B — F&O Pre-Market Analysis
 
-After all individual evaluations are complete, the results are combined:
+Goal: a **pre-market directional bias** for index F&O research before 9:15, then validate it after open. Not a trade signal.
 
-### Overall Signal
+## Inputs (when available)
 
-| Condition | Signal | Badge |
-|-----------|--------|-------|
-| More Pros than Cons | **▲ Bullish** | 🟢 |
-| More Cons than Pros | **▼ Bearish** | 🔴 |
-| Equal Pros and Cons | **◆ Neutral** | 🟡 |
+| Input | Notes |
+|-------|------|
+| NIFTY / BANK NIFTY prior session OHLC + SMA/RSI | yfinance |
+| Expected open / indication | Last price or configured GIFT symbol; else may equal prior close |
+| Gap amount & % | `(expected − prev close) / prev close` |
+| India VIX | Level + short-term trend |
+| US / Asia indices, USD/INR, crude, gold | Direction aggregates |
+| FII / DII cash | Buy / sell / net; optional 5-day trend |
+| Option chain | Max call/put OI, OI change, PCR (OI/volume), dynamic strikes |
+| Events | Expiry proximity, known calendar flags (no random scraping) |
 
-This is a simple heuristic count — it does **not** weight the importance of individual signals. A single strong con (e.g., overbought RSI at 85 during a death cross) may outweigh two mild pros. **Use human judgment to weigh the signals.**
+Unavailable fields are labeled explicitly; they do not invent values.
+
+## Gap Classification (configurable)
+
+Thresholds: `GAP_FLAT_PCT`, `GAP_SMALL_PCT`, `GAP_MODERATE_PCT` (percent of previous close).
+
+| \|gap %\| band | Label |
+|----------------|-------|
+| < flat | Flat |
+| < small | Small Gap Up/Down |
+| < moderate | Moderate Gap Up/Down |
+| ≥ moderate | Strong Gap Up/Down |
+
+## Option Chain Heuristics
+
+- **Put support** — highest put OI strikes at/below spot  
+- **Call resistance** — highest call OI strikes at/above spot  
+- **PCR (OI)** — `total put OI / total call OI`  
+- **Important strikes** — ATM ± radius × strike interval (`NIFTY_STRIKE_INTERVAL` default 50, BANKNIFTY 100)  
+- **Expiry day** — PCR / OI signals are dampened (`expiry_type == expiry_day`)
+
+## Key Levels
+
+Immediate/major support & resistance from (sources labeled in report):
+
+- Previous day high / low / close  
+- Classic floor pivots (S1/S2/R1/R2)  
+- Max put / call OI when chain is available  
+
+## Market Regime
+
+One of: Trending Bullish, Trending Bearish, Range Bound, High Volatility, Low Volatility, Unclear — from SMA relationship, closeness of MAs, and VIX thresholds (`VIX_ELEVATED`, `VIX_HIGH`).
+
+## Checklist
+
+Configurable boolean items across Trend, Global, Volatility, F&O, Institutional, Events. Each item is ✓ / ✗ / — (unavailable).
+
+## Scoring Engine
+
+Each category emits signal ∈ {−2, −1, 0, +1, +2} × configurable **weight** (`WEIGHT_*` in `.env`).
+
+```
+total        = Σ (signal × weight)   for available categories
+max_score    = Σ (weight × 2)        for available categories
+normalized   = map total from [-max, +max] → [0, 100]
+```
+
+Bias bands (normalized %):
+
+| Range | Label |
+|-------|-------|
+| 0–20 | Strong Bearish |
+| 20–35 | Bearish |
+| 35–45 | Mild Bearish |
+| 45–55 | Neutral |
+| 55–65 | Mild Bullish |
+| 65–80 | Bullish |
+| 80–100 | Strong Bullish |
+
+## Confidence
+
+Derived from data coverage, agreement vs conflict among signals, signal strength, and checklist completeness. Coverage &lt; 40% caps confidence. Missing major inputs → lower confidence by design.
+
+## 9:15 / 9:30 Confirmation
+
+| Time | Question |
+|------|----------|
+| 9:15 | Did actual open align with expected open / bias? |
+| 9:30 | Is bias Confirmed, Partially confirmed, or Invalidated? |
+
+The 9:00 report is a **hypothesis**; confirmation is required before treating it as useful context.
+
+## Historical Accuracy
+
+Stored fields (expected/actual opens, scores, bias, confidence, VIX, FII/DII, PCR, confirmations, later outcome) feed `premarket-accuracy`. Segment stats (expiry, high VIX, gap days, regimes) appear only when outcomes exist. **Do not claim edge until sample size supports it.**
 
 ---
 
@@ -166,18 +165,16 @@ This is a simple heuristic count — it does **not** weight the importance of in
 
 | Limitation | Detail |
 |------------|--------|
-| **Lagging indicators** | SMA and RSI are based on historical data. They confirm trends, they don't predict them. |
-| **No fundamental analysis** | Stockpy does not evaluate earnings, P/E ratios, debt levels, or company financials. |
-| **Mock news sentiment** | Real news analysis requires API integration and NLP — currently stubbed. |
-| **No position sizing** | The tool does not suggest how much to invest. |
-| **Indian market hours** | Data is fetched from Yahoo Finance, which may have slight delays for NSE/BSE data. |
-
----
+| Lagging equity indicators | SMA/RSI confirm, don’t predict |
+| No full fundamentals | No P/E, debt, earnings model |
+| yfinance delays / rate limits | Suitable for research, not HFT |
+| NSE option-chain / GIFT | May be unavailable from some networks; report continues |
+| Pre-market bias | Decision support only — not an order signal |
 
 ## Recommended Workflow
 
-1. **Run a scan** to identify interesting candidates.
-2. **Review the pros and cons** — are the signals aligned?
-3. **Cross-reference** with fundamental data (earnings, P/E, sector performance).
-4. **Check the charts** manually for patterns the scanner doesn't detect (support/resistance, chart patterns).
-5. **Make your decision** — Stockpy surfaces signals, but the final call is yours.
+1. Run **pre-market** near 9:00 IST (or `--force` for a dry run).  
+2. Read bias + confidence + risk flags; note unavailable data.  
+3. At/after open, run **9:15** and **9:30** confirmation.  
+4. Separately use equity scan for stock ideas.  
+5. Decide manually — Stockpy does not place trades.

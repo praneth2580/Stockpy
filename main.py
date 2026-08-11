@@ -18,6 +18,14 @@ from simple_term_menu import TerminalMenu
 # Core runner logic
 from scanner.runner import run_scan, scan_and_rank, settings
 from scanner.notifier import TelegramNotifier
+from scanner.config import PREMARKET
+from scanner.premarket import (
+    generate_premarket_report,
+    run_open_snapshot,
+    run_confirmation,
+    format_premarket_telegram,
+    format_accuracy_dashboard,
+)
 
 # ─── Logging Setup ──────────────────────────────────────────
 DEV_MODE = True
@@ -429,10 +437,48 @@ def handle_help():
     help_text = (
         "[bold cyan]Stockpy[/bold cyan] scans Indian equities and provides pros/cons based on technicals and news sentiment.\n\n"
         "[bold]Pipeline:[/bold]\n  1. Fetch data  2. Indicators  3. News Sentiment  4. Report\n\n"
+        "[bold]F&O Pre-Market:[/bold]\n"
+        "  python main.py --premarket [--force] [--no-notify]\n"
+        "  python main.py --premarket-open [--force]\n"
+        "  python main.py --premarket-confirm [--force]\n"
+        "  python main.py --premarket-accuracy\n\n"
         "[bold]Keyboard:[/bold]\n  ↑ ↓  Navigate    Enter  Select    Space  Multi-select    Esc/q  Back"
     )
     console.print(Panel(help_text, title="[bold cyan]ℹ️  Help[/bold cyan]", border_style="cyan", padding=(1, 4)))
     input("\n  Press Enter to return...")
+
+
+def _maybe_notify_premarket(report: dict, *, notify: bool) -> None:
+    if not notify or report.get("skipped"):
+        return
+    if not PREMARKET.get("notify_enabled", True):
+        return
+    notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
+    if not notifier.is_configured():
+        return
+    with console.status("[bold cyan]Sending pre-market report to Telegram...[/]"):
+        notifier.send_message(format_premarket_telegram(report))
+
+
+def handle_premarket(*, force: bool = True, notify: bool = True) -> dict:
+    """Interactive / manual 9:00-style F&O pre-market report."""
+    show_banner()
+    console.print("  [accent]📈  F&O Pre-Market Analysis[/accent]\n")
+    console.print("  [dim]Decision-support only — not a trade signal.[/dim]\n")
+    with console.status("[bold cyan]Collecting pre-market data...[/]"):
+        report = generate_premarket_report(force=force)
+    if report.get("skipped"):
+        console.print(f"[warning]Skipped:[/warning] {report.get('reason')}")
+        return report
+    console.print(Panel(report.get("text", ""), title="[bold cyan]F&O Pre-Market[/bold cyan]", border_style="cyan"))
+    _maybe_notify_premarket(report, notify=notify)
+    return report
+
+
+def handle_premarket_accuracy():
+    show_banner()
+    console.print("  [accent]📊  Pre-Market Bias Performance[/accent]\n")
+    console.print(Panel(format_accuracy_dashboard(), border_style="magenta"))
 
 
 def interactive_mode():
@@ -441,6 +487,8 @@ def interactive_mode():
         "🔍  Scan Stocks",
         "📋  Quick Scan",
         "🔥  Top 10 from Top 50",
+        "📈  F&O Pre-Market Report",
+        "📊  Pre-Market Accuracy",
         "⚙️   Settings",
         "ℹ️   Help",
         "🚪  Exit",
@@ -454,10 +502,14 @@ def interactive_mode():
         elif idx == 2:
             handle_top_candidates()
         elif idx == 3:
-            handle_settings()
+            handle_premarket(force=True, notify=True)
         elif idx == 4:
+            handle_premarket_accuracy()
+        elif idx == 5:
+            handle_settings()
+        elif idx == 6:
             handle_help()
-        elif idx == 5 or idx == -1:
+        elif idx == 7 or idx == -1:
             console.print("\n  [muted]Goodbye! 👋[/muted]\n")
             sys.exit(0)
         console.print()
@@ -475,9 +527,70 @@ def main():
         action="store_true",
         help="Run non-interactive daily scan on NSE Top 50 and send Telegram summary.",
     )
+    parser.add_argument(
+        "--premarket",
+        action="store_true",
+        help="Run F&O pre-market analysis (~9:00 AM IST report).",
+    )
+    parser.add_argument(
+        "--premarket-open",
+        action="store_true",
+        help="Run 9:15 AM market-open snapshot vs pre-market bias.",
+    )
+    parser.add_argument(
+        "--premarket-confirm",
+        action="store_true",
+        help="Run 9:30 AM confirmation check.",
+    )
+    parser.add_argument(
+        "--premarket-accuracy",
+        action="store_true",
+        help="Show historical pre-market bias performance dashboard.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force pre-market jobs (ignore weekend/holiday/duplicate guards).",
+    )
+    parser.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Skip Telegram notification for pre-market report.",
+    )
 
     args = parser.parse_args()
     setup_logging(dev=args.dev)
+
+    if args.premarket_accuracy:
+        print(format_accuracy_dashboard())
+        return
+
+    if args.premarket:
+        report = generate_premarket_report(force=args.force)
+        if report.get("skipped"):
+            print(f"Skipped: {report.get('reason')}")
+            return
+        print(report.get("text", ""))
+        _maybe_notify_premarket(report, notify=not args.no_notify)
+        return
+
+    if args.premarket_open:
+        snap = run_open_snapshot(force=args.force)
+        print(snap.get("text") or snap)
+        if not snap.get("skipped") and not args.no_notify and PREMARKET.get("notify_enabled", True):
+            notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
+            if notifier.is_configured():
+                notifier.send_message(f"<pre>{snap.get('text', '')}</pre>")
+        return
+
+    if args.premarket_confirm:
+        conf = run_confirmation(force=args.force)
+        print(conf.get("text") or conf)
+        if not conf.get("skipped") and not args.no_notify and PREMARKET.get("notify_enabled", True):
+            notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
+            if notifier.is_configured():
+                notifier.send_message(f"<pre>{conf.get('text', '')}</pre>")
+        return
 
     if args.top50:
         # Non-interactive daily scan used by GitHub Actions / cron.

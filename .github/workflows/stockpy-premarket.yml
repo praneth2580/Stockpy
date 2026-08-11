@@ -1,0 +1,169 @@
+name: StockPy F&O Pre-Market
+
+# IST slots (UTC cron, Mon–Fri):
+#   09:00 IST → 03:30 UTC  — pre-market report
+#   09:15 IST → 03:45 UTC  — open snapshot
+#   09:30 IST → 04:00 UTC  — confirmation
+#
+# Required repo secrets (optional but recommended):
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+on:
+  schedule:
+    - cron: "30 3 * * 1-5"
+    - cron: "45 3 * * 1-5"
+    - cron: "0 4 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run"
+        required: true
+        default: "premarket"
+        type: choice
+        options:
+          - premarket
+          - open
+          - confirm
+          - accuracy
+      force:
+        description: "Force run (ignore holiday/duplicate guards)"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  PREMARKET_NOTIFY: "true"
+  PREMARKET_DB_PATH: data/premarket.db
+  PREMARKET_TIMEZONE: Asia/Kolkata
+  TZ: Asia/Kolkata
+
+jobs:
+  premarket:
+    name: F&O pre-market job
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore previous premarket DB (best-effort)
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: premarket-db
+          workflow: stockpy-premarket.yml
+          workflow_conclusion: success
+          path: data
+          search_artifacts: true
+          if_no_artifact_found: warn
+
+      - name: Ensure data directory
+        run: mkdir -p data
+
+      - name: Detect IST slot / dispatch job
+        id: slot
+        run: |
+          IST_HOUR=$(TZ=Asia/Kolkata date +%H)
+          IST_MIN=$(TZ=Asia/Kolkata date +%M)
+          UTC_MIN=$(date -u +%M)
+          echo "ist_time=${IST_HOUR}:${IST_MIN}" >> "$GITHUB_OUTPUT"
+          echo "IST now: ${IST_HOUR}:${IST_MIN} (UTC min=${UTC_MIN})"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "job=${{ inputs.job }}" >> "$GITHUB_OUTPUT"
+            if [ "${{ inputs.force }}" = "true" ]; then
+              echo "force_flag=--force" >> "$GITHUB_OUTPUT"
+            else
+              echo "force_flag=" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          echo "force_flag=" >> "$GITHUB_OUTPUT"
+
+          # Prefer IST window; fall back to UTC cron minute (30 / 45 / 00).
+          if [ "$IST_HOUR" = "09" ] && [ "$IST_MIN" -lt 10 ]; then
+            JOB=premarket
+          elif [ "$IST_HOUR" = "09" ] && [ "$IST_MIN" -lt 25 ]; then
+            JOB=open
+          elif [ "$IST_HOUR" = "09" ] && [ "$IST_MIN" -lt 40 ]; then
+            JOB=confirm
+          elif [ "$UTC_MIN" = "30" ]; then
+            JOB=premarket
+          elif [ "$UTC_MIN" = "45" ]; then
+            JOB=open
+          else
+            JOB=confirm
+          fi
+          echo "job=${JOB}" >> "$GITHUB_OUTPUT"
+          echo "Selected job=${JOB}"
+
+      - name: Skip if NSE holiday / weekend
+        id: calendar
+        if: steps.slot.outputs.job != 'accuracy'
+        run: |
+          python - <<'PY'
+          import os
+          from scanner.premarket.calendar import is_trading_day, now_ist
+
+          force = os.environ.get("FORCE_FLAG", "").strip() == "--force"
+          d = now_ist().date()
+          open_ = is_trading_day(d) or force
+          print(f"date={d.isoformat()} trading_day={is_trading_day(d)} force={force}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"trading_day={'true' if open_ else 'false'}\n")
+          PY
+        env:
+          FORCE_FLAG: ${{ steps.slot.outputs.force_flag }}
+
+      - name: Run F&O job
+        if: steps.slot.outputs.job == 'accuracy' || steps.calendar.outputs.trading_day == 'true'
+        run: |
+          JOB="${{ steps.slot.outputs.job }}"
+          FORCE="${{ steps.slot.outputs.force_flag }}"
+          echo "Running job=$JOB force='$FORCE'"
+          case "$JOB" in
+            premarket) python main.py --premarket $FORCE --dev ;;
+            open)      python main.py --premarket-open $FORCE --dev ;;
+            confirm)   python main.py --premarket-confirm $FORCE --dev ;;
+            accuracy)  python main.py --premarket-accuracy ;;
+            *) echo "Unknown job: $JOB"; exit 1 ;;
+          esac
+
+      - name: Skipped (non-trading day)
+        if: steps.slot.outputs.job != 'accuracy' && steps.calendar.outputs.trading_day != 'true'
+        run: echo "Skipping — not an NSE trading day (use workflow_dispatch + force to override)."
+
+      - name: Upload premarket DB artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: premarket-db
+          path: data/premarket.db
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stockpy-log-${{ steps.slot.outputs.job }}
+          path: stockpy.log
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,58 +1,70 @@
 # Real-Life Quality Evaluation — Stockpy
 
-As a professional-grade tool, how does **Stockpy** stack up? Here is a breakdown of its strengths, weaknesses, and potential for real-life usage.
+How Stockpy stacks up for real research use after the equity scanner **and** F&O pre-market extension.
 
 ---
 
-## 🏗️ Technical Architecture — **Grade: B+**
+## Technical Architecture — Grade: A-
 
 ### Strengths
--   **Concurrency**: Using `ThreadPoolExecutor` for parallel scanning is excellent. Without this, scanning 20+ stocks would be painfully slow due to network I/O.
--   **Clean Code**: The logic is modular. Separating [indicators.py](file:///home/apprication/Projects/Practice/Stockpy/scanner/indicators.py), [news.py](file:///home/apprication/Projects/Practice/Stockpy/scanner/news.py), and [evaluator.py](file:///home/apprication/Projects/Practice/Stockpy/scanner/evaluator.py) makes it easy to maintain or swap components (e.g., swapping VADER for GPT-4).
--   **Sentiment Engine**: Unlike many beginner projects, this uses real-time news headlines via `yfinance` and runs them through the VADER sentiment analyzer.
+- Modular equity pipeline (`data_fetcher` → `indicators` → `news` → `evaluator` / `screener`)
+- Parallel scans via `ThreadPoolExecutor`
+- F&O logic isolated under `scanner/premarket/` without rewriting the equity path
+- Env-backed config (`.env` / `scanner/config.py`), SQLite history, retry helpers, per-source failure isolation
+- GitHub Actions for equity daily + IST pre-market / open / confirm slots
+- pytest coverage for gap, OI/PCR, scoring, calendar, duplicates, accuracy helpers
 
-### Real-Life Concerns
--   **Data Reliability**: `yfinance` is great for hobbyists, but for real-life trading, it can suffer from rate-limiting and slightly delayed data (15 mins for NSE).
--   **Error Handling**: If an API call fails, the tool gracefully reports it, but it doesn't currently have a retry mechanism for flaky connections.
-
----
-
-## 📈 Analysis Methodology — **Grade: B-**
-
-### What’s Good
--   **Golden/Death Cross**: Implementing SMA50/200 crossover is a classic, robust strategy used by institutional investors.
--   **RSI Context**: The logic distinguishes between "Overbought" (sell signal) and "Weak Momentum" (downward pressure), which is a nuanced touch.
--   **Volume Spikes**: Detecting 1.5x volume is a solid way to identify "Institutional footprints."
-
-### What’s Missing for "Pro" Use
--   **Market Correlation**: Individual stocks rarely move against the market. A real-life tool should scan the **NIFTY 50 index** first; if the index is crashing, most "Bullish" signals on stocks should be ignored.
--   **Support & Resistance**: Most traders rely on price levels (Pivot Points, Fibonacci). Stockpy currently only uses moving averages.
--   **Volatility (ATR)**: There is no measure of risk. A stock moving 10% a day needs a different approach than one moving 0.5%.
+### Remaining concerns
+- `yfinance` can rate-limit or lag (fine for research, not for low-latency trading)
+- NSE option-chain endpoints are fragile from some IPs/clouds — design correctly degrades to `DATA UNAVAILABLE`
+- Shipping Telegram credentials should stay in env/secrets only (prefer `.env` / GitHub Secrets over defaults)
 
 ---
 
-## 🛠️ User Experience & UI — **Grade: A**
+## Analysis Methodology — Grade: B+
 
--   **Interactive Menus**: The use of `simple-term-menu` and `rich` tables makes it feel like a premium terminal application.
--   **Actionable Reports**: The **Pros vs. Cons** format is much better for human decision-making than just a single "BUY/SELL" text.
+### Equity
+- Classic SMA50/200 + RSI + volume spike heuristics remain clear and explainable
+- Live VADER news (not a stub)
+
+### F&O pre-market (addresses earlier gaps)
+| Earlier gap | Status |
+|-------------|--------|
+| NIFTY / market context | Covered — index snapshot + globals + VIX |
+| Support / resistance | Covered — PDH/L, pivots, OI levels with sources |
+| Volatility | Covered — India VIX + regime |
+| Backtesting / tracking | Partial — reports + 9:30 confirmation stored; accuracy dashboard needs time to accumulate samples |
+
+Scoring is weighted and transparent; language is bias/confidence — not “guaranteed CALL”.
 
 ---
 
-## ⚖️ Final Verdict: Is it "Real-Life" Ready?
+## User Experience — Grade: A
 
-| Purpose | Is it good? | Why? |
+- Rich interactive menus including F&O report + accuracy
+- CLI flags for cron/Actions (`--premarket`, `--premarket-open`, `--premarket-confirm`)
+- Telegram reuse for both equity and pre-market
+
+No web dashboard yet — accuracy is CLI/`--premarket-accuracy` (fits the current CLI-first architecture).
+
+---
+
+## Final Verdict
+
+| Purpose | Ready? | Why |
 | :--- | :--- | :--- |
-| **Learning/Practice** | ✅ **Excellent** | Perfect baseline for learning Python, Data Science, and Finance. |
-| **Daily Research Assistant** | ⚠️ **Good (with caution)** | Great for finding candidates, but you must check the manual chart afterward. |
-| **Automated Trading** | ❌ **Not Ready** | Lacks risk management (Stop Loss), backtesting, and execution logic. |
+| Learning / practice | ✅ Excellent | Clean pipelines + tests |
+| Daily equity research | ✅ Good (with chart confirmation) | Pros/Cons + top-N screen |
+| F&O pre-open context | ✅ Useful hypothesis tool | Bias + checklist + confirmations |
+| Automated trading | ❌ Not in scope | No execution, sizing, or guaranteed outcomes |
 
 ---
 
-## 🚀 3 Steps to make it "Elite"
+## Next upgrades (optional)
 
-1.  **Add NIFTY Correlation**: Add a check to see if the overall market is Bullish or Bearish.
-2.  **Add Support/Resistance**: Calculate 52-week highs/lows or Pivot Points.
-3.  **Backtesting Module**: A way to see "If I followed these signals for the last 6 months, would I have made money?"
+1. Reliable GIFT Nifty symbol/source when you have one (`GIFT_NIFTY_SYMBOL`)
+2. Persist Actions `data/premarket.db` across runs (artifact or remote store) for long-run accuracy
+3. Enrich later-day outcomes automatically (EOD close vs bias) for stronger backtests
+4. Keep NSE holiday list updated each calendar year
 
-> [!TIP]
-> **Conclusion**: For an Indian market scanner, Stockpy is a **powerful 7.5/10**. It handles the "boring" part of research (gathering data) exceptionally well, allowing you to focus on the "smart" part (making the final decision).
+> **Conclusion:** Stockpy is a solid Indian-market **research assistant**. The pre-market module fills the index/OI/VIX gap called out earlier, as long as you treat 9:00 output as a hypothesis and wait for open confirmation.
