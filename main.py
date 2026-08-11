@@ -26,6 +26,7 @@ from scanner.premarket import (
     format_premarket_telegram,
     format_accuracy_dashboard,
 )
+from scanner.premarket.report import format_confirm_telegram, format_open_telegram
 
 # ─── Logging Setup ──────────────────────────────────────────
 DEV_MODE = True
@@ -590,10 +591,8 @@ def main():
         elif not PREMARKET.get("notify_enabled", True):
             print("[telegram] SKIP: PREMARKET_NOTIFY is false.", flush=True)
         else:
-            import html as _html
             notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
-            body = _html.escape(str(snap.get("text") or ""), quote=False)
-            send_or_log(notifier, f"<pre>{body}</pre>", label="9:15 open snapshot")
+            send_or_log(notifier, format_open_telegram(snap), label="9:15 open snapshot")
         return
 
     if args.premarket_confirm:
@@ -606,10 +605,8 @@ def main():
         elif not PREMARKET.get("notify_enabled", True):
             print("[telegram] SKIP: PREMARKET_NOTIFY is false.", flush=True)
         else:
-            import html as _html
             notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
-            body = _html.escape(str(conf.get("text") or ""), quote=False)
-            send_or_log(notifier, f"<pre>{body}</pre>", label="9:30 confirmation")
+            send_or_log(notifier, format_confirm_telegram(conf), label="9:30 confirmation")
         return
 
     if args.top50:

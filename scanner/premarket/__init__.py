@@ -8,6 +8,8 @@ __all__ = [
     "run_confirmation",
     "format_premarket_report",
     "format_premarket_telegram",
+    "format_open_telegram",
+    "format_confirm_telegram",
     "compute_accuracy_stats",
     "format_accuracy_dashboard",
 ]
@@ -34,6 +36,14 @@ def __getattr__(name: str):
         from scanner.premarket.report import format_premarket_telegram
 
         return format_premarket_telegram
+    if name == "format_open_telegram":
+        from scanner.premarket.report import format_open_telegram
+
+        return format_open_telegram
+    if name == "format_confirm_telegram":
+        from scanner.premarket.report import format_confirm_telegram
+
+        return format_confirm_telegram
     if name == "compute_accuracy_stats":
         from scanner.premarket.accuracy import compute_accuracy_stats
 

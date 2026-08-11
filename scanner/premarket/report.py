@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from typing import Any
 
 
@@ -26,6 +27,119 @@ def _check_mark(passed: bool | None) -> str:
     if passed is False:
         return "✗"
     return "—"
+
+
+def _fmt_price(val: Any) -> str:
+    if val is None:
+        return "—"
+    try:
+        return f"{float(val):,.0f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _bias_emoji(label: str | None) -> str:
+    low = (label or "").lower()
+    if "bullish" in low:
+        return "🟢"
+    if "bearish" in low:
+        return "🔴"
+    return "🟡"
+
+
+def _confidence_words(confidence: Any) -> str:
+    try:
+        c = int(confidence)
+    except (TypeError, ValueError):
+        return "Unknown"
+    if c >= 75:
+        level = "High"
+    elif c >= 55:
+        level = "Medium"
+    elif c >= 35:
+        level = "Low"
+    else:
+        level = "Very low"
+    return f"{level} ({c}%)"
+
+
+def _plain_bias_sentence(label: str | None, confidence: Any) -> str:
+    low = (label or "neutral").lower()
+    if "strong bullish" in low:
+        vibe = "Markets look clearly positive before the open"
+    elif "mild bullish" in low or low == "bullish":
+        vibe = "Markets look slightly positive before the open"
+    elif "strong bearish" in low:
+        vibe = "Markets look clearly negative before the open"
+    elif "mild bearish" in low or low == "bearish":
+        vibe = "Markets look slightly negative before the open"
+    else:
+        vibe = "No strong direction before the open"
+    try:
+        c = int(confidence)
+    except (TypeError, ValueError):
+        c = 0
+    if c < 45:
+        return f"{vibe}, but confidence is low — wait for the open."
+    return f"{vibe}. Wait for the open to confirm."
+
+
+def _gap_plain(gap_class: str | None, gap_pct: Any) -> str:
+    if not gap_class:
+        return "Not clear yet"
+    gc = gap_class.lower()
+    if gc == "flat":
+        return "Around yesterday’s close (flat)"
+    if "strong gap up" in gc:
+        return "Likely gap up (strong)"
+    if "moderate gap up" in gc or "small gap up" in gc:
+        return "Likely small / moderate gap up"
+    if "strong gap down" in gc:
+        return "Likely gap down (strong)"
+    if "moderate gap down" in gc or "small gap down" in gc:
+        return "Likely small / moderate gap down"
+    return gap_class
+
+
+def _arrow(direction: str | None) -> str:
+    d = (direction or "unavailable").lower()
+    if d == "positive":
+        return "↑"
+    if d == "negative":
+        return "↓"
+    if d == "mixed":
+        return "↕"
+    if d == "flat":
+        return "→"
+    return "?"
+
+
+def _vix_plain(vix: dict | None) -> str:
+    vix = vix or {}
+    if not vix.get("available") or vix.get("value") is None:
+        return "Unknown"
+    val = float(vix["value"])
+    if val >= 22:
+        mood = "High (nervous market)"
+    elif val >= 18:
+        mood = "Elevated"
+    else:
+        mood = "Calm"
+    return f"{mood} ({val:.1f})"
+
+
+def _flow_plain(net: Any) -> str:
+    if net is None:
+        return "Unknown"
+    try:
+        n = float(net)
+    except (TypeError, ValueError):
+        return "Unknown"
+    if n > 0:
+        return "Buying"
+    if n < 0:
+        return "Selling"
+    return "Flat"
 
 
 def format_premarket_report(report: dict) -> str:
@@ -161,15 +275,180 @@ def format_premarket_report(report: dict) -> str:
 
 
 def format_premarket_telegram(report: dict) -> str:
-    """HTML-ish plain summary for Telegram (reuse existing notifier)."""
-    text = format_premarket_report(report)
-    # Escape minimal HTML-sensitive chars while keeping readability
-    return (
-        "<b>F&amp;O Pre-Market Report</b>\n"
-        "<pre>"
-        + text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        + "</pre>"
-    )
+    """
+    Beginner-friendly Telegram glance card.
+    Full technical detail stays in format_premarket_report / CLI / logs.
+    """
+    meta = report.get("meta", {}) or {}
+    nifty = report.get("nifty", {}) or {}
+    bank = report.get("banknifty", {}) or {}
+    global_ = report.get("global", {}) or {}
+    vix = report.get("vix", {}) or {}
+    fii = report.get("fii_dii", {}) or {}
+    levels_n = report.get("levels_nifty", {}) or {}
+    oc_n = report.get("option_chain_nifty", {}) or {}
+    bias = report.get("bias", {}) or {}
+    risks = report.get("risk_flags", []) or []
+
+    date_s = meta.get("report_date") or ""
+    label = bias.get("label") or "Neutral"
+    conf = bias.get("confidence")
+    emoji = _bias_emoji(label)
+
+    missing_bits = []
+    if not nifty.get("available", True) and nifty.get("previous_close") is None:
+        missing_bits.append("NIFTY")
+    if not (oc_n.get("available")):
+        missing_bits.append("options")
+    if not fii.get("available"):
+        missing_bits.append("FII/DII")
+    if global_.get("gift_direction") in (None, "unavailable"):
+        missing_bits.append("GIFT")
+
+    lines = [
+        f"<b>📊 Morning Market Glance</b> — {html.escape(str(date_s))}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"<b>Overall vibe:</b> {emoji} {html.escape(str(label))}",
+        f"<b>Confidence:</b> {_confidence_words(conf)}",
+        f"<i>{html.escape(_plain_bias_sentence(label, conf))}</i>",
+        "",
+        "<b>NIFTY</b>",
+        f"Yesterday close: {_fmt_price(nifty.get('previous_close'))}",
+        f"Likely open:     {html.escape(_gap_plain(nifty.get('gap_class'), nifty.get('gap_pct')))}",
+        f"Watch support:   {_fmt_price(levels_n.get('immediate_support'))}",
+        f"Watch resistance: {_fmt_price(levels_n.get('immediate_resistance'))}",
+        "",
+        "<b>BANK NIFTY</b>",
+        f"Yesterday close: {_fmt_price(bank.get('previous_close'))}",
+        f"Likely open:     {html.escape(_gap_plain(bank.get('gap_class'), bank.get('gap_pct')))}",
+        "",
+        f"<b>World overnight:</b> US {_arrow(global_.get('us_direction'))}   "
+        f"Asia {_arrow(global_.get('asia_direction'))}",
+        f"<b>Fear gauge (VIX):</b> {html.escape(_vix_plain(vix))}",
+        f"<b>Big money:</b> FII {_flow_plain(fii.get('fii_net'))}  |  "
+        f"DII {_flow_plain(fii.get('dii_net'))}",
+        "",
+    ]
+
+    if risks or missing_bits:
+        lines.append("<b>⚠️ Watch out</b>")
+        for r in risks[:3]:
+            lines.append(f"• {html.escape(str(r))}")
+        if missing_bits:
+            lines.append(
+                "• Some data missing ("
+                + html.escape(", ".join(missing_bits))
+                + ") — less sure"
+            )
+        lines.append("")
+
+    support = levels_n.get("immediate_support")
+    resist = levels_n.get("immediate_resistance")
+    lines += [
+        "<b>What to do</b>",
+        "1. Don’t trade from this message alone",
+        "2. At 9:15, check if the open matches this vibe",
+    ]
+    if support is not None:
+        lines.append(f"3. If NIFTY holds {_fmt_price(support)} → idea still alive")
+    else:
+        lines.append("3. Wait for open confirmation before acting")
+    if resist is not None:
+        lines.append(f"4. If NIFTY breaks {_fmt_price(resist)} → morning idea may be wrong")
+
+    lines += [
+        "",
+        "<i>Hypothesis only — not a buy/sell call.</i>",
+    ]
+    return "\n".join(lines)
+
+
+def format_open_telegram(snapshot: dict) -> str:
+    """Short 9:15 glance for Telegram."""
+    meta = snapshot.get("meta", {}) or {}
+    date_s = meta.get("report_date") or ""
+    bias = snapshot.get("premarket_bias") or "Unknown"
+    result = snapshot.get("open_915_result") or "Insufficient data"
+    nifty = snapshot.get("nifty", {}) or {}
+    expected = (snapshot.get("expected_vs_actual_nifty") or {}).get("expected")
+    actual = (snapshot.get("expected_vs_actual_nifty") or {}).get("actual_open") or nifty.get("open")
+
+    emoji = {
+        "Confirmed": "✅",
+        "Partially confirmed": "🟡",
+        "Invalidated": "❌",
+        "Insufficient data": "❔",
+    }.get(result, "•")
+
+    plain = {
+        "Confirmed": "Open is lining up with the morning vibe so far.",
+        "Partially confirmed": "Open is mixed — morning vibe only partly matches.",
+        "Invalidated": "Open is going against the morning vibe.",
+        "Insufficient data": "Not enough open data yet to judge.",
+    }.get(result, result)
+
+    lines = [
+        f"<b>🕘 9:15 Open Check</b> — {html.escape(str(date_s))}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"<b>Morning vibe was:</b> {html.escape(str(bias))}",
+        f"<b>Vs open:</b> {emoji} {html.escape(str(result))}",
+        f"<i>{html.escape(plain)}</i>",
+        "",
+        f"NIFTY open: {_fmt_price(actual)}"
+        + (f"  (expected ~{_fmt_price(expected)})" if expected is not None else ""),
+        "",
+        "<b>What to do</b>",
+        "• Wait for 9:30 confirmation",
+        "• Still don’t enter only from this",
+        "",
+        "<i>Hypothesis check — not a trade signal.</i>",
+    ]
+    return "\n".join(lines)
+
+
+def format_confirm_telegram(confirmation: dict) -> str:
+    """Short 9:30 glance for Telegram."""
+    meta = confirmation.get("meta", {}) or {}
+    date_s = meta.get("report_date") or ""
+    bias = confirmation.get("premarket_bias") or "Unknown"
+    result = confirmation.get("confirm_930_result") or "Insufficient data"
+    nifty = confirmation.get("nifty", {}) or {}
+    last = nifty.get("last") or nifty.get("open")
+
+    emoji = {
+        "Confirmed": "✅",
+        "Partially confirmed": "🟡",
+        "Invalidated": "❌",
+        "Insufficient data": "❔",
+    }.get(result, "•")
+
+    plain = {
+        "Confirmed": "Morning vibe still holds after the first 15 minutes.",
+        "Partially confirmed": "Mixed — treat the morning idea carefully.",
+        "Invalidated": "Morning vibe did not hold — step back.",
+        "Insufficient data": "Not enough data to confirm.",
+    }.get(result, result)
+
+    lines = [
+        f"<b>🕘 9:30 Confirmation</b> — {html.escape(str(date_s))}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"<b>Path:</b> Morning vibe → Open → 9:30",
+        f"<b>Morning vibe:</b> {html.escape(str(bias))}",
+        f"<b>Result:</b> {emoji} {html.escape(str(result))}",
+        f"<i>{html.escape(plain)}</i>",
+        "",
+        f"NIFTY now: {_fmt_price(last)}",
+        "",
+        "<b>What to do</b>",
+        "• Use your own chart + risk rules",
+        "• This is context, not a guaranteed call",
+        "",
+        "<i>Decision-support only.</i>",
+    ]
+    return "\n".join(lines)
 
 
 def build_scenarios(report: dict) -> dict:
