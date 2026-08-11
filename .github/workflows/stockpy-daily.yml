@@ -49,6 +49,21 @@ jobs:
               f.write(f"trading_day={'true' if open_ else 'false'}\n")
           PY
 
+      - name: Telegram config check
+        run: |
+          python - <<'PY'
+          import os
+          print("=== Telegram env diagnostics (secrets masked) ===")
+          token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+          chat = os.getenv("TELEGRAM_CHAT_ID", "")
+          print(f"TELEGRAM_BOT_TOKEN set: {bool(token.strip())} len={len(token.strip())}")
+          print(f"TELEGRAM_CHAT_ID set: {bool(chat.strip())} value={chat.strip() or '(empty)'}")
+          if not token.strip() or not chat.strip():
+              print("::warning title=Telegram secrets missing::Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in repo Actions secrets.")
+          else:
+              print("Secrets present. Delivery result will appear as [telegram] lines below.")
+          PY
+
       - name: Run daily top-50 scan
         if: steps.calendar.outputs.trading_day == 'true'
         run: python main.py --top50 --dev

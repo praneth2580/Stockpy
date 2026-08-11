@@ -22,6 +22,8 @@
 #
 # Notes
 # -----
+# - Look for lines starting with `[telegram]` in the job log for send
+#   status / API errors (chat not found, bot blocked, bad HTML, etc.).
 # - Premarket DB is uploaded as artifact `premarket-db` and restored
 #   on the next run (best-effort) so accuracy history can accumulate.
 # - NSE holidays use scanner/premarket/calendar.py — keep that list current.

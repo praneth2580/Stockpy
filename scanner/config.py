@@ -59,11 +59,9 @@ def _env_int(key: str, default: int) -> int:
 DEFAULT_SETTINGS: dict[str, Any] = {
     "workers": _env_int("STOCKPY_WORKERS", 3),
     "period": _env("STOCKPY_PERIOD", "1y"),
-    "telegram_token": _env(
-        "TELEGRAM_BOT_TOKEN",
-        "5710041825:AAEulSFLC4TBEidHKYcmsmBht-u7_AJUbj4",
-    ),
-    "telegram_chat_id": _env("TELEGRAM_CHAT_ID", "1175853690"),
+    # Prefer env / GitHub secrets. Empty means "not configured" (no silent fallback token).
+    "telegram_token": _env("TELEGRAM_BOT_TOKEN", ""),
+    "telegram_chat_id": _env("TELEGRAM_CHAT_ID", ""),
 }
 
 # Pre-market / F&O configuration

@@ -132,6 +132,20 @@ jobs:
         env:
           FORCE_FLAG: ${{ steps.slot.outputs.force_flag }}
 
+      - name: Telegram config check
+        run: |
+          python - <<'PY'
+          import os
+          print("=== Telegram env diagnostics (secrets masked) ===")
+          token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+          chat = os.getenv("TELEGRAM_CHAT_ID", "")
+          print(f"TELEGRAM_BOT_TOKEN set: {bool(token.strip())} len={len(token.strip())}")
+          print(f"TELEGRAM_CHAT_ID set: {bool(chat.strip())} value={chat.strip() or '(empty)'}")
+          print(f"PREMARKET_NOTIFY={os.getenv('PREMARKET_NOTIFY')}")
+          if not token.strip() or not chat.strip():
+              print("::warning title=Telegram secrets missing::Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in repo Actions secrets.")
+          PY
+
       - name: Run F&O job
         if: steps.slot.outputs.job == 'accuracy' || steps.calendar.outputs.trading_day == 'true'
         run: |

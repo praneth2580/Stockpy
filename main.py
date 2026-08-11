@@ -17,7 +17,7 @@ from simple_term_menu import TerminalMenu
 
 # Core runner logic
 from scanner.runner import run_scan, scan_and_rank, settings
-from scanner.notifier import TelegramNotifier
+from scanner.notifier import TelegramNotifier, send_or_log
 from scanner.config import PREMARKET
 from scanner.premarket import (
     generate_premarket_report,
@@ -35,38 +35,45 @@ logger = logging.getLogger(__name__)
 def setup_logging(dev: bool = False):
     global DEV_MODE
     DEV_MODE = dev
-    
-    # ── Root Logger ──
+
+    in_actions = os.getenv("GITHUB_ACTIONS", "").lower() == "true"
     level = logging.DEBUG if dev else logging.INFO
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)  # Root takes all
-    
-    # Clear existing handlers
+    root_logger.setLevel(logging.DEBUG)
+
     for h in root_logger.handlers[:]:
         root_logger.removeHandler(h)
 
-    # 1. Console Handler (Respects DEV_MODE)
-    c_level = logging.DEBUG if dev else logging.WARNING
+    # GitHub Actions: always show INFO+ so Telegram diagnostics appear without --dev.
+    c_level = logging.DEBUG if dev else (logging.INFO if in_actions else logging.WARNING)
     c_handler = logging.StreamHandler(sys.stdout)
     c_handler.setLevel(c_level)
-    c_handler.setFormatter(logging.Formatter("%(asctime)s │ %(levelname)-8s │ %(name)-15.15s │ %(message)s", datefmt="%H:%M:%S"))
+    c_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s │ %(levelname)-8s │ %(name)-15.15s │ %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
     root_logger.addHandler(c_handler)
 
-    # 2. File Handler (Always active, level follows 'dev')
     f_handler = logging.FileHandler("stockpy.log", mode="a", encoding="utf-8")
     f_handler.setLevel(level)
     f_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     root_logger.addHandler(f_handler)
 
-    # Specific logger settings
-    logging.getLogger("scanner").setLevel(level)
+    logging.getLogger("scanner").setLevel(logging.DEBUG if (dev or in_actions) else level)
+    logging.getLogger("scanner.notifier").setLevel(logging.INFO)
     logging.getLogger(__name__).setLevel(level)
-    
-    # Suppress noisy third-party loggers
+
     for noisy in ("yfinance", "peewee", "urllib3", "curl_cffi"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    logging.getLogger(__name__).debug(f"Logging initialized. Mode: {'DEV' if dev else 'NORMAL'}. File: stockpy.log")
+    logging.getLogger(__name__).debug(
+        "Logging initialized. Mode: %s. GITHUB_ACTIONS=%s. File: stockpy.log",
+        "DEV" if dev else "NORMAL",
+        in_actions,
+    )
+
 
 # ─── Theme & Console ────────────────────────────────────────
 custom_theme = Theme({
@@ -275,10 +282,7 @@ def handle_scan():
         
         # Telegram Notification
         notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
-        if notifier.is_configured():
-            with console.status("[bold cyan]Sending to Telegram...[/]"):
-                report_text = notifier.format_analysis_report(results)
-                notifier.send_message(report_text)
+        send_or_log(notifier, notifier.format_analysis_report(results), label="scan report")
 
 
 def handle_quick_scan():
@@ -292,10 +296,7 @@ def handle_quick_scan():
         
         # Telegram Notification
         notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
-        if notifier.is_configured():
-            with console.status("[bold cyan]Sending to Telegram...[/]"):
-                report_text = notifier.format_analysis_report(results)
-                notifier.send_message(report_text)
+        send_or_log(notifier, notifier.format_analysis_report(results), label="quick scan report")
 
 
 def handle_top_candidates():
@@ -352,46 +353,43 @@ def handle_top_candidates():
 
     # Build a concise Telegram-only summary: header + top 10 details + one-line "others" list.
     notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
-    if notifier.is_configured():
-        with console.status("[bold cyan]Sending summary to Telegram...[/]"):
-            lines: list[str] = []
-            lines.append("<b>📊 Stockpy — Top 10 Candidates</b>")
-            lines.append("<i>From NSE Top 50 universe</i>")
-            lines.append("")
+    lines: list[str] = []
+    lines.append("<b>📊 Stockpy — Top 10 Candidates</b>")
+    lines.append("<i>From NSE Top 50 universe</i>")
+    lines.append("")
 
-            for rank, (score, res) in enumerate(top, start=1):
-                ticker = res["ticker"]
-                ev = res["evaluation"]
-                tech = ev.get("technicals", {})
-                pros = ev.get("pros", []) or []
-                cons = ev.get("cons", []) or []
+    for rank, (score, res) in enumerate(top, start=1):
+        ticker = res["ticker"]
+        ev = res["evaluation"]
+        tech = ev.get("technicals", {})
+        pros = ev.get("pros", []) or []
+        cons = ev.get("cons", []) or []
 
-                close = tech.get("close")
-                rsi = tech.get("rsi")
+        close = tech.get("close")
+        rsi = tech.get("rsi")
 
-                if len(pros) > len(cons):
-                    signal = "🟢 Bullish"
-                elif len(cons) > len(pros):
-                    signal = "🔴 Bearish"
-                else:
-                    signal = "🟡 Neutral"
+        if len(pros) > len(cons):
+            signal = "🟢 Bullish"
+        elif len(cons) > len(pros):
+            signal = "🔴 Bearish"
+        else:
+            signal = "🟡 Neutral"
 
-                price_str = f"₹{close:,.2f}" if close is not None else "—"
-                rsi_str = f"{rsi:.1f}" if rsi is not None else "—"
+        price_str = f"₹{close:,.2f}" if close is not None else "—"
+        rsi_str = f"{rsi:.1f}" if rsi is not None else "—"
 
-                lines.append(f"{rank}. <b>{ticker}</b> — {signal}  (Score: {score:.2f})")
-                lines.append(f"   Price: {price_str} | RSI: {rsi_str}")
-                if pros:
-                    lines.append(f"   ✅ {pros[0]}")
-                if cons:
-                    lines.append(f"   ⚠️ {cons[0]}")
-                lines.append("")
+        lines.append(f"{rank}. <b>{ticker}</b> — {signal}  (Score: {score:.2f})")
+        lines.append(f"   Price: {price_str} | RSI: {rsi_str}")
+        if pros:
+            lines.append(f"   ✅ {pros[0]}")
+        if cons:
+            lines.append(f"   ⚠️ {cons[0]}")
+        lines.append("")
 
-            # One-line list of all tickers scanned, to preserve context without huge blocks.
-            all_tickers = ", ".join(sorted(r["ticker"] for r in results))
-            lines.append(f"<i>Scanned universe:</i> {all_tickers}")
+    all_tickers = ", ".join(sorted(r["ticker"] for r in results))
+    lines.append(f"<i>Scanned universe:</i> {all_tickers}")
 
-            notifier.send_message("\n".join(lines))
+    send_or_log(notifier, "\n".join(lines), label="top-50 summary")
 
 
 def handle_settings():
@@ -449,15 +447,23 @@ def handle_help():
 
 
 def _maybe_notify_premarket(report: dict, *, notify: bool) -> None:
-    if not notify or report.get("skipped"):
+    if not notify:
+        print("[telegram] SKIP: notify disabled for this run (--no-notify).", flush=True)
+        return
+    if report.get("skipped"):
+        print(f"[telegram] SKIP: report skipped ({report.get('reason')}).", flush=True)
         return
     if not PREMARKET.get("notify_enabled", True):
+        print("[telegram] SKIP: PREMARKET_NOTIFY is false.", flush=True)
         return
     notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
     if not notifier.is_configured():
+        print(
+            "[telegram] SKIP: not configured. Set GitHub secrets TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.",
+            flush=True,
+        )
         return
-    with console.status("[bold cyan]Sending pre-market report to Telegram...[/]"):
-        notifier.send_message(format_premarket_telegram(report))
+    send_or_log(notifier, format_premarket_telegram(report), label="premarket report")
 
 
 def handle_premarket(*, force: bool = True, notify: bool = True) -> dict:
@@ -577,19 +583,33 @@ def main():
     if args.premarket_open:
         snap = run_open_snapshot(force=args.force)
         print(snap.get("text") or snap)
-        if not snap.get("skipped") and not args.no_notify and PREMARKET.get("notify_enabled", True):
+        if snap.get("skipped"):
+            print(f"[telegram] SKIP: open snapshot skipped ({snap.get('reason')}).", flush=True)
+        elif args.no_notify:
+            print("[telegram] SKIP: --no-notify", flush=True)
+        elif not PREMARKET.get("notify_enabled", True):
+            print("[telegram] SKIP: PREMARKET_NOTIFY is false.", flush=True)
+        else:
+            import html as _html
             notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
-            if notifier.is_configured():
-                notifier.send_message(f"<pre>{snap.get('text', '')}</pre>")
+            body = _html.escape(str(snap.get("text") or ""), quote=False)
+            send_or_log(notifier, f"<pre>{body}</pre>", label="9:15 open snapshot")
         return
 
     if args.premarket_confirm:
         conf = run_confirmation(force=args.force)
         print(conf.get("text") or conf)
-        if not conf.get("skipped") and not args.no_notify and PREMARKET.get("notify_enabled", True):
+        if conf.get("skipped"):
+            print(f"[telegram] SKIP: confirmation skipped ({conf.get('reason')}).", flush=True)
+        elif args.no_notify:
+            print("[telegram] SKIP: --no-notify", flush=True)
+        elif not PREMARKET.get("notify_enabled", True):
+            print("[telegram] SKIP: PREMARKET_NOTIFY is false.", flush=True)
+        else:
+            import html as _html
             notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
-            if notifier.is_configured():
-                notifier.send_message(f"<pre>{conf.get('text', '')}</pre>")
+            body = _html.escape(str(conf.get("text") or ""), quote=False)
+            send_or_log(notifier, f"<pre>{body}</pre>", label="9:30 confirmation")
         return
 
     if args.top50:
@@ -604,10 +624,7 @@ def main():
 
         # Telegram Notification
         notifier = TelegramNotifier(settings.get("telegram_token"), settings.get("telegram_chat_id"))
-        if notifier.is_configured():
-            with console.status("[bold cyan]Sending to Telegram...[/]"):
-                report_text = notifier.format_analysis_report(results)
-                notifier.send_message(report_text)
+        send_or_log(notifier, notifier.format_analysis_report(results), label="cli scan report")
 
 
 if __name__ == "__main__":
