@@ -143,8 +143,8 @@ See `.env.example`.
 | Workflow | Role |
 |----------|------|
 | `.github/workflows/ci.yml` | Pytest on push/PR |
-| `.github/workflows/stockpy-daily.yml` | Mon–Fri equity `--top50` (holiday skip) |
-| `.github/workflows/stockpy-premarket.yml` | Mon–Fri IST 09:00 / 09:15 / 09:30 + DB artifact restore |
+| `.github/workflows/stockpy-daily.yml` | Mon–Fri equity `--top50` (cron early for ~15:30 IST) |
+| `.github/workflows/stockpy-premarket.yml` | Mon–Fri F&O (cron ~08:00/08:15/08:30 IST → aim ~09:xx); job from `github.event.schedule`; no Telegram ping on schedule |
 
 Secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Details: `.github/README.md`.
 

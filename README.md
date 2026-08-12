@@ -147,13 +147,15 @@ Copy `.env.example` → `.env`. Important variables:
 
 See [`.github/README.md`](.github/README.md) for secrets and manual dispatch.
 
-| Workflow | When | Command |
-|----------|------|---------|
+Crons are started **~30 minutes early** because GitHub Actions is often late.
+
+| Workflow | Cron (aims for) | Command |
+|----------|-----------------|---------|
 | `ci.yml` | Push / PR | `pytest` + import smoke |
 | `stockpy-daily.yml` | Mon–Fri ≈ 15:30 IST | `--top50` (skips NSE holidays) |
 | `stockpy-premarket.yml` | Mon–Fri ≈ 09:00 / 09:15 / 09:30 IST | `--premarket` / `--premarket-open` / `--premarket-confirm` |
 
-Set repository secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` for Actions notifications. Premarket DB is artifact-persisted between runs (best-effort).
+Set repository secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` for Actions notifications. Scheduled runs send **only** the glance/summary (no connectivity ping). Premarket DB is artifact-persisted between runs (best-effort).
 
 ---
 

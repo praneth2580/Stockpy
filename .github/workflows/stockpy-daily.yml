@@ -1,11 +1,13 @@
 name: StockPy Daily Equity Scan
 
 # NSE Top-50 screen after Indian market hours (approx).
-# 10:00 UTC ≈ 15:30 IST (near cash close). Mon–Fri only.
+# Cron is ~30 min early to absorb GitHub Actions delay:
+#   09:30 UTC ≈ 15:00 IST  → often lands near 15:30 IST
+# Mon–Fri only.
 
 on:
   schedule:
-    - cron: "0 10 * * 1-5"
+    - cron: "30 9 * * 1-5"
   workflow_dispatch:
 
 env:
@@ -49,32 +51,21 @@ jobs:
               f.write(f"trading_day={'true' if open_ else 'false'}\n")
           PY
 
-      - name: Telegram ping (prove secrets work)
+      - name: Telegram config check (no chat spam)
         run: |
           python - <<'PY'
           import os
-          import sys
-          from scanner.notifier import ping_telegram
 
           token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
           chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-          print("=== Telegram env diagnostics ===")
+          print("=== Telegram env diagnostics (no ping sent) ===")
           print(f"TELEGRAM_BOT_TOKEN set: {bool(token)} len={len(token)}")
           print(f"TELEGRAM_CHAT_ID set: {bool(chat)} value={chat or '(empty)'}")
-
           if not token or not chat:
-              print("::error title=Telegram secrets missing::"
-                    "Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID under "
-                    "Settings → Secrets and variables → Actions")
-              sys.exit(1)
-
-          ok = ping_telegram(token, chat)
-          if not ok:
-              print("::error title=Telegram ping failed::"
-                    "If TELEGRAM_CHAT_ID is @channel: add the bot as Channel Admin "
-                    "with Post Messages enabled. Token alone is not enough.")
-              sys.exit(1)
-          print("Telegram ping delivered.")
+              print("::warning title=Telegram secrets missing::"
+                    "Scan will run but no Telegram message will be sent.")
+          else:
+              print("Secrets present. Only the scan summary will be sent.")
           PY
 
       - name: Run daily top-50 scan
